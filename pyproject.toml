@@ -1,7 +1,7 @@
 [project]
 name = "stock-research"
 version = "0.1.0"
-description = "Backend for Vietnam stock market research"
+description = "Backend Python phân tích chứng khoán Việt Nam qua BookFin FCData Gateway"
 readme = "README.md"
 requires-python = ">=3.12"
 
@@ -15,6 +15,9 @@ dependencies = [
     "alembic",
     "redis",
     "httpx",
+    "websockets",
+    "numpy",
+    "ta-lib",
 ]
 
 [dependency-groups]
@@ -22,6 +25,7 @@ dev = [
     "ruff",
     "pytest",
     "pytest-asyncio",
+    "respx",
 ]
 
 [build-system]
@@ -39,7 +43,7 @@ packages = ["src/app"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "tests"]
+src = ["src"]
 
 [tool.ruff.lint]
 select = [
@@ -71,3 +75,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: cần PostgreSQL, Redis hoặc dịch vụ ngoài đang chạy",
+]

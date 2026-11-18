@@ -1,1 +1,1 @@
-"""HTTP middleware shared by every request."""
+"""HTTP middleware dùng chung cho mọi request."""

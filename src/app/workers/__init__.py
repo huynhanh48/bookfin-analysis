@@ -1,1 +1,1 @@
-"""Background workers, run as separate processes."""
+"""Worker chạy như process riêng, không chạy trong Uvicorn."""

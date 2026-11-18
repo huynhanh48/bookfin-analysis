@@ -1,0 +1,95 @@
+{
+  "description": "Zigzag tăng (HH+HL) rồi đảo chiều giảm (CHoCH). pivot_length=3, break_confirmation=close.",
+  "config": {
+    "pivot_length": 3,
+    "break_confirmation": "close"
+  },
+  "spread": 1.0,
+  "closes": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    9,
+    8,
+    7,
+    9,
+    10,
+    11,
+    12,
+    11,
+    10,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    13,
+    12,
+    11,
+    10,
+    9,
+    8,
+    7,
+    8,
+    9,
+    10
+  ],
+  "expected_swings": [
+    {
+      "index": 5,
+      "kind": "HIGH",
+      "label": null
+    },
+    {
+      "index": 8,
+      "kind": "LOW",
+      "label": null
+    },
+    {
+      "index": 12,
+      "kind": "HIGH",
+      "label": "HH"
+    },
+    {
+      "index": 15,
+      "kind": "LOW",
+      "label": "HL"
+    },
+    {
+      "index": 20,
+      "kind": "HIGH",
+      "label": "HH"
+    },
+    {
+      "index": 27,
+      "kind": "LOW",
+      "label": "LL"
+    }
+  ],
+  "expected_events": [
+    {
+      "event_type": "BOS_BULLISH",
+      "broken_index": 12,
+      "bias_before": "NEUTRAL",
+      "bias_after": "BULLISH"
+    },
+    {
+      "event_type": "BOS_BULLISH",
+      "broken_index": 20,
+      "bias_before": "BULLISH",
+      "bias_after": "BULLISH"
+    },
+    {
+      "event_type": "CHOCH_BEARISH",
+      "broken_index": 27,
+      "bias_before": "BULLISH",
+      "bias_after": "BEARISH"
+    }
+  ],
+  "expected_break_bias": "BEARISH",
+  "expected_confirmed_trend": "TRANSITION"
+}

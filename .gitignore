@@ -30,3 +30,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Local data dumps
+*.sql.gz

@@ -1,7 +1,7 @@
-"""Alembic environment configured for async SQLAlchemy (asyncpg).
+"""Môi trường Alembic cho async SQLAlchemy (asyncpg).
 
-The database URL is taken from `app.config.Settings`, so credentials live only in
-the environment and never in `alembic.ini`.
+URL database lấy từ `app.core.config.Settings`, nên credential chỉ nằm trong biến
+môi trường và không bao giờ xuất hiện trong `alembic.ini`.
 """
 
 import asyncio
@@ -12,9 +12,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app import models  # noqa: F401  (imported so autogenerate sees every model)
-from app.config import get_settings
-from app.database import Base
+from app import models  # noqa: F401  (import để autogenerate thấy mọi model)
+from app.core.config import get_settings
+from app.core.database import Base
 
 config = context.config
 
@@ -27,12 +27,13 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode, emitting SQL without a DBAPI connection."""
+    """Chạy migration ở chế độ offline, chỉ sinh SQL, không kết nối database."""
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
 
     with context.begin_transaction():
@@ -40,15 +41,23 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """Configure the migration context on an already open connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    """Cấu hình migration context trên một connection đã mở.
+
+    Args:
+        connection: Connection đồng bộ do `run_sync` cung cấp.
+    """
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_async_migrations() -> None:
-    """Run migrations through an async engine."""
+    """Chạy migration qua async engine."""
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -62,8 +71,13 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    asyncio.run(run_async_migrations())
+    """Chạy migration ở chế độ online, có thể dùng connection được chia sẻ."""
+    connectable = config.attributes.get("connection", None)
+
+    if connectable is None:
+        asyncio.run(run_async_migrations())
+    else:
+        do_run_migrations(connectable)
 
 
 if context.is_offline_mode():

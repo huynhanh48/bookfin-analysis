@@ -1,1 +1,1 @@
-"""Pydantic v2 request and response schemas."""
+"""Pydantic v2 schema cho request, response và DTO nội bộ."""

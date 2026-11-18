@@ -1,3 +1,44 @@
+# Docker Compose cho môi trường development.
+#
+# - `postgres`: PostgreSQL 17 + pgvector, luôn chạy.
+# - `redis`: Redis 8, thuộc profile `cache` (chỉ chạy khi được bật).
+# - `api`: FastAPI + uvicorn --reload, mount ./src nên sửa code là cập nhật ngay.
+# - `worker`: chạy worker (backfill / indicator / realtime) với cùng source đã mount.
+# - `migrate`: chạy Alembic một lần, dùng khi cần apply migration.
+#
+# Lệnh thường dùng:
+#   docker compose up -d --build                 # postgres + api
+#   docker compose --profile cache up -d         # thêm redis
+#   docker compose run --rm migrate              # alembic upgrade head
+#   docker compose run --rm worker python -m app.workers.backfill --symbols FPT --days 400
+#   docker compose run --rm worker python -m app.workers.indicator_worker --symbols FPT
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  API_PREFIX: ${API_PREFIX:-/api/v1}
+  # Trong container, host của PostgreSQL là tên service `postgres`, không phải localhost.
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stock}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-stock_research}
+  REDIS_ENABLED: ${REDIS_ENABLED:-false}
+  REDIS_URL: redis://redis:6379/0
+  FCDATA_BASE_URL: ${FCDATA_BASE_URL:-https://fcdata.bookfin.vn}
+  FCDATA_WS_URL: ${FCDATA_WS_URL:-wss://fcdata.bookfin.vn/ws}
+  FCDATA_TIMEOUT_SECONDS: ${FCDATA_TIMEOUT_SECONDS:-15}
+  FCDATA_MAX_CONCURRENCY: ${FCDATA_MAX_CONCURRENCY:-8}
+  FCDATA_MAX_RETRIES: ${FCDATA_MAX_RETRIES:-3}
+  MARKET_TIMEZONE: ${MARKET_TIMEZONE:-Asia/Ho_Chi_Minh}
+  BENCHMARK_SYMBOL: ${BENCHMARK_SYMBOL:-VNINDEX}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+
+# Mount source để code trong container luôn trùng với code trên máy.
+x-app-volumes: &app-volumes
+  - ./src:/app/src
+  - ./tests:/app/tests
+  - ./alembic:/app/alembic
+  - ./alembic.ini:/app/alembic.ini:ro
+  - ./pyproject.toml:/app/pyproject.toml:ro
+  - ./.env:/app/.env:ro
+
 services:
   postgres:
     image: pgvector/pgvector:0.8.7-pg17
@@ -45,6 +86,71 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  api:
+    build:
+      context: .
+      target: dev
+    restart: unless-stopped
+
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/src
+
+    environment: *app-environment
+    volumes: *app-volumes
+
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      target: dev
+    profiles:
+      - worker
+
+    command:
+      - python
+      - -m
+      - app.workers.indicator_worker
+      - --all
+      - --limit
+      - "20"
+
+    environment: *app-environment
+    volumes: *app-volumes
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: .
+      target: dev
+    profiles:
+      - tools
+
+    command: ["alembic", "upgrade", "head"]
+
+    environment: *app-environment
+    volumes: *app-volumes
+
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

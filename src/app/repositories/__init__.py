@@ -1,1 +1,1 @@
-"""Persistence layer: repositories own all database queries."""
+"""Truy vấn database: repository là nơi duy nhất viết SQLAlchemy."""

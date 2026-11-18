@@ -27,5 +27,5 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check .
 
-      - name: Test
-        run: uv run pytest -q
+      - name: Unit tests
+        run: uv run pytest -q -m "not integration"

@@ -1,1 +1,1 @@
-"""Business logic layer: services orchestrate repositories and external clients."""
+"""Business logic: service điều phối repository, FCData và indicator engine."""

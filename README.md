@@ -1,117 +1,149 @@
 # Stock Research API
 
-Backend Python phục vụ hệ thống AI phân tích chứng khoán Việt Nam, xây dựng bằng FastAPI
-theo Layer-Based Architecture (routers → services → repositories).
+Backend Python phân tích chứng khoán Việt Nam, dữ liệu lấy từ **BookFin FCData Gateway**
+(`https://fcdata.bookfin.vn`). Dự án không gọi thẳng SSI và không sửa service cũ.
 
-## Tech Stack
+Luồng phụ thuộc: `router → service → repository → PostgreSQL`, trong đó service còn gọi
+`fcdata/` (gateway) và `indicators/` (tính toán thuần).
 
-- Python 3.12
-- FastAPI + Pydantic v2 + Pydantic Settings
-- SQLAlchemy 2.x (async) + asyncpg + Alembic
-- PostgreSQL 17 + pgvector
-- Redis 8
-- httpx
-- uv (quản lý dependencies), Ruff (lint/format), Pytest + pytest-asyncio
-- Docker Compose (PostgreSQL, Redis)
+## Tech stack
+
+- Python 3.12, FastAPI, Uvicorn
+- Pydantic v2 + pydantic-settings
+- SQLAlchemy 2.x async + asyncpg + Alembic
+- PostgreSQL 17 + pgvector, Redis 8 (tuỳ chọn)
+- httpx (REST), websockets (realtime), numpy, TA-Lib
+- uv, Ruff, Pytest + pytest-asyncio + respx
+- Docker Compose: PostgreSQL, Redis, API và worker
 
 ## Cấu trúc thư mục
 
 | Thư mục | Mô tả |
 |---------|-------|
-| `src/app/routers` | Nhận request và trả response |
+| `src/app/routers` | Nhận request, trả response |
 | `src/app/services` | Business logic |
 | `src/app/repositories` | Truy vấn database |
-| `src/app/models` | SQLAlchemy ORM models |
-| `src/app/schemas` | Pydantic v2 schemas |
-| `src/app/fcdata` | Tích hợp dữ liệu SSI FCData |
-| `src/app/indicators` | Hàm tính toán chỉ báo kỹ thuật |
-| `src/app/workers` | Tác vụ chạy nền |
-| `src/app/middleware` | Middleware request/response |
-| `src/app/common` | Tiện ích dùng chung |
-| `alembic` | Database migrations |
-| `tests` | Unit và integration tests |
-| `docker` | Script khởi tạo cho container |
-
-Luồng phụ thuộc: router → service → repository → model. Router không truy vấn database
-trực tiếp, repository không chứa business logic.
+| `src/app/models` | SQLAlchemy ORM |
+| `src/app/schemas` | Pydantic v2 DTO |
+| `src/app/fcdata` | Adapter REST + WebSocket tới gateway |
+| `src/app/indicators` | Chỉ báo và cấu trúc thị trường (hàm thuần) |
+| `src/app/workers` | Worker backfill, realtime, precompute |
+| `src/app/core` | Config, database, redis, logging, exception, DI |
+| `src/app/middleware` | Request id, access log |
+| `alembic` | Migration |
+| `tests` | Unit test và integration test |
+| `references` | Contract gateway và script Pine tham chiếu |
 
 ## Cài đặt
 
-Cài dependencies và tạo môi trường ảo:
+```bash
+uv sync
+cp .env.example .env
+```
 
-    uv sync
+Sửa `POSTGRES_PASSWORD` trong `.env` nếu cần. `DATABASE_URL` dùng `localhost` khi chạy
+trên máy; khi chạy trong Docker, compose tự đổi host thành `postgres`.
 
-Tạo file môi trường:
+## Docker
 
-    cp .env.example .env
+Docker Compose dựng PostgreSQL, Redis (tuỳ chọn), API và worker. API và worker **mount
+`./src`**, nên sửa code là container cập nhật ngay: API chạy `uvicorn --reload`, worker
+dùng đúng source đã mount.
 
-Đổi `POSTGRES_PASSWORD` trong `.env` rồi cập nhật `DATABASE_URL` cho khớp.
+```bash
+docker compose up -d --build                 # postgres + api
+docker compose --profile cache up -d         # thêm redis
+docker compose ps
+docker compose logs -f api
+```
 
-## Các lệnh thường dùng
+Apply migration trong container:
 
-Chạy development server:
+```bash
+docker compose run --rm migrate              # alembic upgrade head
+```
 
-    uv run uvicorn app.main:app --reload
+Chạy worker (một lần, dùng chung source đã mount):
 
-API documentation: http://localhost:8000/docs
+```bash
+docker compose run --rm worker python -m app.workers.backfill --sync-symbols --symbols FPT,HPG --days 400
+docker compose run --rm worker python -m app.workers.indicator_worker --symbols FPT,HPG
+docker compose run --rm worker python -m app.workers.realtime --symbols FPT --indices VNINDEX
+```
 
-Kiểm tra lint:
+Test và lint trong container:
 
-    uv run ruff check .
+```bash
+docker compose exec api pytest -q -m "not integration"
+docker compose exec api ruff check .
+```
 
-Format code:
+Kiểm tra hạ tầng:
 
-    uv run ruff format .
+```bash
+docker compose exec postgres psql -U stock -d stock_research \
+  -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+docker compose exec redis redis-cli ping
+docker compose --profile cache --profile worker --profile tools down   # giữ nguyên volumes
+```
 
-Kiểm tra format:
+`docker/postgres/init.sql` chỉ chạy khi PostgreSQL tạo data directory mới; mọi thay đổi
+schema sau đó phải đi qua Alembic.
 
-    uv run ruff format --check .
+## Chạy trực tiếp bằng uv
 
-Chạy test:
+```bash
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload                  # http://localhost:8000/docs
+uv run python -m app.workers.backfill --sync-symbols --symbols FPT --days 400
+uv run python -m app.workers.indicator_worker --symbols FPT
+uv run python -m app.workers.realtime --symbols FPT --indices VNINDEX
+```
 
-    uv run pytest -q
+Các lệnh Makefile tương ứng: `make up`, `make docker-migrate`, `make worker-backfill`,
+`make worker-indicators`, `make worker-realtime`, `make docker-test`, `make dev`.
 
-Chạy migration:
+## API chính
 
-    uv run alembic upgrade head
+```bash
+curl localhost:8000/health
+curl localhost:8000/ready
+curl "localhost:8000/api/v1/market/symbols?limit=5"
+curl "localhost:8000/api/v1/market/candles/FPT?timeframe=1D&limit=10"
+curl "localhost:8000/api/v1/market/quotes/FPT"
+curl "localhost:8000/api/v1/indicators/FPT?timeframe=1D"
+curl "localhost:8000/api/v1/indicators/FPT/structure?timeframe=1D"
+curl -X POST localhost:8000/api/v1/market/backfill -H "Content-Type: application/json" \
+  -H "X-Admin-Key: $ADMIN_API_KEY" -d '{"symbols":["FPT"],"timeframe":"1D"}'
+```
 
-Hoặc dùng Makefile: `make install`, `make run`, `make lint`, `make format`, `make test`,
-`make migrate`.
+`/health` không truy cập database hay gateway. `/ready` kiểm tra PostgreSQL, Redis khi
+bật. Endpoint `backfill` yêu cầu `X-Admin-Key` khi `ADMIN_API_KEY` được đặt.
 
-## Docker Infrastructure
+## Lint và test
 
-Docker Compose cung cấp database và cache; backend chạy local bằng `uv`.
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q -m "not integration"
+uv run pytest -q -m integration        # cần PostgreSQL đang chạy
+```
 
-Khởi động PostgreSQL:
+## Lưu ý về dữ liệu
 
-    docker compose up -d postgres
-
-Khởi động PostgreSQL và Redis:
-
-    docker compose --profile cache up -d
-
-Kiểm tra trạng thái container:
-
-    docker compose ps
-
-Kiểm tra pgvector:
-
-    docker compose exec postgres psql -U stock -d stock_research \
-      -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
-
-Kiểm tra Redis:
-
-    docker compose exec redis redis-cli ping
-
-Dừng dịch vụ (giữ nguyên named volumes):
-
-    docker compose --profile cache down
-
-`docker/postgres/init.sql` chỉ chạy khi PostgreSQL khởi tạo data directory mới. Với
-database đã tồn tại, bật extension bằng migration hoặc chạy SQL riêng. Mọi thay đổi
-schema sau này phải đi qua Alembic.
+- Bảng `candles` **chỉ chứa nến đã đóng**. Nến đang hình thành được giữ ở Redis hoặc
+  trong bộ nhớ với trạng thái `FORMING` và không bao giờ ghi đè bản ghi đã đóng.
+- Mọi bản ghi nến đều có `price_basis` (`RAW`/`ADJUSTED`); không trộn hai loại trong
+  cùng một chuỗi khi tính chỉ báo hoặc cấu trúc.
+- Chỉ báo và cấu trúc thị trường được precompute theo nến và lưu kèm `engine_version`
+  cùng hash tham số, nên khi logic đổi thì kết quả cũ vẫn đối chiếu được.
+- `break_bias` là bias phá cấu trúc (giống biến `trend` trong Pine), **không** phải xác
+  nhận đảo chiều. `confirmed_trend` mới là xu hướng đã xác nhận theo cấu trúc HH+HL/LH+LL.
+- Khi gateway lỗi, API trả bản ghi cũ kèm `as_of`, `is_stale` và `note` thay vì trả rỗng
+  giả thành công.
 
 ## Trạng thái
 
-Project đã khởi tạo: cấu trúc layer, cấu hình, Alembic, CI và Docker infrastructure.
-Market Data Engine, indicators, RAG và AI Agent chưa được triển khai.
+Phase 1 đã có: gateway REST + WebSocket, backfill và nến đã đóng trong PostgreSQL,
+indicator engine (TA-Lib), market structure engine, worker, API và Docker.
+RAG, LangGraph và AI Agent chưa triển khai.

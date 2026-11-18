@@ -1,0 +1,73 @@
+[project]
+name = "stock-research"
+version = "0.1.0"
+description = "Backend for Vietnam stock market research"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "sqlalchemy[asyncio]>=2",
+    "asyncpg",
+    "alembic",
+    "redis",
+    "httpx",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+
+# -------------------------
+# Ruff
+# -------------------------
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E4",   # Import errors
+    "E7",   # Statement errors
+    "E9",   # Runtime syntax errors
+    "F",    # Pyflakes
+    "I",    # Import sorting
+    "B",    # Bugbear
+    "UP",   # Modern Python syntax
+    "SIM",  # Simplification
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+
+# -------------------------
+# Pytest
+# -------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

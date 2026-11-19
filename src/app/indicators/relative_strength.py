@@ -7,6 +7,7 @@ trách nhiệm của service vì cần dữ liệu thời gian; module này ch�
 import numpy as np
 
 from app.indicators import IndicatorOutput, as_float_array
+from app.indicators.native import native_series
 
 
 def compute_relative_strength(
@@ -57,8 +58,8 @@ def compute_relative_strength(
             warmup=period + 1,
         )
 
-    stock_return = (float(stock[-1]) / stock_start - 1) * 100
-    benchmark_return = (float(benchmark[-1]) / benchmark_start - 1) * 100
+    stock_return = float(native_series("ROC", stock, timeperiod=period)[-1])
+    benchmark_return = float(native_series("ROC", benchmark, timeperiod=period)[-1])
     outperformance = stock_return - benchmark_return
 
     rs_line = stock / benchmark

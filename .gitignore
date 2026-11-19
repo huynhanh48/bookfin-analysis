@@ -11,6 +11,16 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+# user ignore 
+fe/
+/agents
+.agents/
+AGENTS.md
+docs/
+indicators/
+references/
+.vscode/
+bookfin-analysis-web/
 
 # Virtual environments
 .venv/
@@ -33,3 +43,6 @@ htmlcov/
 
 # Local data dumps
 *.sql.gz
+
+# Persistent RAG graph, chart originals and parser artifacts
+data/

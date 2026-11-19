@@ -1,9 +1,9 @@
 """Chỉ báo khối lượng và dòng tiền: Volume SMA, RVOL, OBV và MFI."""
 
 import numpy as np
-import talib
 
 from app.indicators import IndicatorOutput, as_float_array, last_value
+from app.indicators.native import native_series
 
 
 def compute_volume_sma(volume: np.ndarray, *, period: int = 20) -> IndicatorOutput:
@@ -16,7 +16,7 @@ def compute_volume_sma(volume: np.ndarray, *, period: int = 20) -> IndicatorOutp
     Returns:
         `IndicatorOutput` với khoá `volume_sma`.
     """
-    values = talib.SMA(as_float_array(volume), timeperiod=period)
+    values = native_series("SMA", as_float_array(volume), timeperiod=period)
     return IndicatorOutput(
         indicator="volume_sma",
         parameters={"period": period},
@@ -36,7 +36,7 @@ def compute_relative_volume(volume: np.ndarray, *, period: int = 20) -> Indicato
         `IndicatorOutput` với `rvol`; None khi trung bình bằng 0 hoặc chưa đủ nến.
     """
     volume_array = as_float_array(volume)
-    average = talib.SMA(volume_array, timeperiod=period)
+    average = native_series("SMA", volume_array, timeperiod=period)
     average_value = last_value(average)
     current = last_value(volume_array)
 
@@ -67,7 +67,7 @@ def compute_obv(close: np.ndarray, volume: np.ndarray) -> IndicatorOutput:
     Returns:
         `IndicatorOutput` với khoá `obv`.
     """
-    values = talib.OBV(as_float_array(close), as_float_array(volume))
+    values = native_series("OBV", as_float_array(close), as_float_array(volume))
     return IndicatorOutput(
         indicator="obv",
         parameters={},
@@ -99,7 +99,8 @@ def compute_mfi(
     Returns:
         `IndicatorOutput` với khoá `mfi`.
     """
-    values = talib.MFI(
+    values = native_series(
+        "MFI",
         as_float_array(high),
         as_float_array(low),
         as_float_array(close),

@@ -1,5 +1,7 @@
 """Điểm vào của FastAPI application."""
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,11 +12,12 @@ from app.core.config import get_settings
 from app.core.database import dispose_engine
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.core.rag_runtime import RagRuntime
 from app.core.redis import close_redis_client
 from app.fcdata.client import FcDataClient
 from app.middleware.access_logging import AccessLoggingMiddleware
 from app.middleware.request_id import RequestIdMiddleware
-from app.routers import health, indicators, market
+from app.routers import analysis, health, indicators, market, rag
 
 logger = get_logger(__name__)
 
@@ -33,7 +36,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings = get_settings()
     configure_logging(settings.log_level)
+    from app.indicators.native import configure_unstable_periods
+
+    configure_unstable_periods(settings.indicator_unstable_periods)
     app.state.fcdata_client = FcDataClient(settings)
+    app.state.rag_runtime = None
+    if settings.rag_enabled:
+        try:
+            from app.workers.rag_worker import consume
+
+            runtime = RagRuntime(settings)
+            app.state.rag_runtime = runtime
+            runtime.worker_task = asyncio.create_task(consume(runtime), name="rag-consumer")
+            # Retrieve exception immediately to avoid unobserved-task logs with provider details.
+            runtime.worker_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        except Exception as exc:
+            logger.warning("rag_start_failed", extra={"error_type": type(exc).__name__})
     logger.info(
         "app_started",
         extra={"app": settings.app_name, "env": settings.app_env, "version": __version__},
@@ -41,6 +61,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        runtime = app.state.rag_runtime
+        if runtime:
+            if runtime.worker_task:
+                runtime.worker_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await runtime.worker_task
+            with contextlib.suppress(Exception):
+                await runtime.close()
         await app.state.fcdata_client.close()
         await close_redis_client()
         await dispose_engine()
@@ -63,6 +91,13 @@ def create_app() -> FastAPI:
 
     # Thứ tự add_middleware: cái thêm sau nằm ngoài cùng, nên request id được
     # thiết lập trước khi access log chạy.
+    from app.middleware.rag_body_limit import RagBodyLimitMiddleware
+
+    app.add_middleware(
+        RagBodyLimitMiddleware,
+        limit=settings.rag_max_upload_bytes + 262144,
+        prefix=settings.api_prefix,
+    )
     app.add_middleware(AccessLoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
@@ -71,6 +106,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(market.router, prefix=settings.api_prefix)
     app.include_router(indicators.router, prefix=settings.api_prefix)
+    app.include_router(analysis.router, prefix=settings.api_prefix)
+    app.include_router(rag.router, prefix=settings.api_prefix)
 
     return app
 

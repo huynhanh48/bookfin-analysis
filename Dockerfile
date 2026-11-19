@@ -23,11 +23,17 @@ COPY --from=uv /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
+# MinerU CLI preflight imports OpenCV even for direct text/image content lists.
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN uv sync --frozen --no-dev
 
 # Chạy bằng user không phải root.
 RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/data/rag /app/data/uploads \
     && chown -R appuser:appuser /app
 USER appuser
 

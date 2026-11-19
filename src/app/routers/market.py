@@ -28,7 +28,7 @@ from app.schemas.market import (
 router = APIRouter(prefix="/market", tags=["market"])
 
 
-def _to_candle_out(candle: Candle) -> CandleOut:
+def to_candle_out(candle: Candle) -> CandleOut:
     """Chuyển nến ORM sang schema trả cho client.
 
     Args:
@@ -106,7 +106,7 @@ async def get_candles(
         symbol=symbol.upper(),
         timeframe=timeframe,
         count=len(candles),
-        candles=[_to_candle_out(candle) for candle in candles],
+        candles=[to_candle_out(candle) for candle in candles],
     )
 
 

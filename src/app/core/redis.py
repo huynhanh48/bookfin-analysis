@@ -24,7 +24,9 @@ def get_redis_client() -> Redis | None:
     if not settings.redis_enabled:
         return None
     if _client is None:
-        _client = Redis.from_url(settings.redis_url, decode_responses=True)
+        _client = Redis.from_url(
+            settings.redis_url, decode_responses=True, socket_connect_timeout=3, socket_timeout=3
+        )
     return _client
 
 

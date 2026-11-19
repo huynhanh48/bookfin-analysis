@@ -1,0 +1,18 @@
+{
+  "version": "synthetic-financial-eval-v1",
+  "notice": "Synthetic scenarios, not actual market observations or investment advice. No model performance claim.",
+  "cases": [
+    {"id":"SYN-KDH-01","symbol":"KDH","timeframe":"1D","note":"RSI phân kỳ dương, engulfing, volume tăng","snapshot":{"status":"ok","as_of":"2026-01-15T08:00:00+00:00","bullish_engulfing":true,"filter_values":{"rsi":58,"rvol":1.8},"divergence_events":[{"direction":"bullish","confirmed_at":"2026-01-15T08:00:00+00:00","oscillators":[{"indicator":"RSI"}]}]},"claims":[{"claim_type":"rsi_bullish_divergence","original_text":"RSI phân kỳ dương","expected":"VERIFIED"},{"claim_type":"bullish_engulfing","original_text":"engulfing","expected":"VERIFIED"},{"claim_type":"volume_increase","original_text":"volume tăng","expected":"VERIFIED"}]},
+    {"id":"SYN-FPT-02","symbol":"FPT","timeframe":"1D","note":"Dòng tiền tổ chức trở lại","snapshot":{"status":"ok","as_of":"2026-01-15T08:00:00+00:00","filter_values":{"rvol":2.5}},"claims":[{"claim_type":"money_inflow","original_text":"Dòng tiền tổ chức trở lại","expected":"NOT_VERIFIABLE"}]},
+    {"id":"SYN-DPG-03","symbol":"DPG","timeframe":"1D","note":"Phân kỳ RSI khi pivot chưa xác nhận","snapshot":{"status":"ok","as_of":"2026-01-15T08:00:00+00:00","divergence_events":[{"direction":"bullish","confirmed_at":"2026-01-16T08:00:00+00:00","oscillators":[{"indicator":"RSI"}]}]},"claims":[{"claim_type":"rsi_bullish_divergence","original_text":"Phân kỳ RSI","expected":"INSUFFICIENT_EVIDENCE"}]},
+    {"id":"SYN-HPG-04","symbol":"HPG","timeframe":"1D","note":"Volume tăng và engulfing","snapshot":{"status":"ok","as_of":"2026-01-15T08:00:00+00:00","bullish_engulfing":false,"filter_values":{"rvol":0.7}},"claims":[{"claim_type":"bullish_engulfing","original_text":"engulfing","expected":"CONTRADICTED"},{"claim_type":"volume_increase","original_text":"Volume tăng","expected":"CONTRADICTED"}]},
+    {"id":"SYN-MWG-05","symbol":"MWG","timeframe":"1W","note":"Engulfing nhưng thiếu dữ liệu tuần","snapshot":{"status":"insufficient_history","reason":"No closed weekly candles"},"claims":[{"claim_type":"bullish_engulfing","original_text":"Engulfing","expected":"INSUFFICIENT_EVIDENCE"}]},
+    {"id":"SYN-ACB-06","symbol":"ACB","timeframe":"1D","note":"MACD phân kỳ dương đã xác nhận","snapshot":{"status":"ok","as_of":"2026-01-15T08:00:00+00:00","divergence_events":[{"direction":"bullish","confirmed_at":"2026-01-15T08:00:00+00:00","oscillators":[{"indicator":"MACD"}]}]},"claims":[{"claim_type":"macd_bullish_divergence","original_text":"MACD phân kỳ dương","expected":"VERIFIED"}]}
+  ],
+  "queries": [
+    {"id":"q-rsi","query":"RSI phân kỳ dương xác nhận cùng engulfing","relevance":{"SYN-KDH-01":3,"SYN-ACB-06":1},"allowed_citations":["case:SYN-KDH-01","case:SYN-ACB-06"]},
+    {"id":"q-volume","query":"Volume yếu và engulfing bị bác bỏ","relevance":{"SYN-HPG-04":3},"allowed_citations":["case:SYN-HPG-04"]},
+    {"id":"q-macd","query":"MACD bullish divergence đã xác nhận","relevance":{"SYN-ACB-06":3,"SYN-KDH-01":1},"allowed_citations":["case:SYN-ACB-06","case:SYN-KDH-01"]},
+    {"id":"q-weekly","query":"Phân tích tuần thiếu bằng chứng","relevance":{"SYN-MWG-05":3},"allowed_citations":["case:SYN-MWG-05"]}
+  ]
+}

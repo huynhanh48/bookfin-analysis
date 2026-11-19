@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("REDIS_ENABLED", "false")
+os.environ.setdefault("RAG_ENABLED", "false")
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

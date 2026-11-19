@@ -19,3 +19,13 @@ async def _dispose_engine_after_test() -> AsyncIterator[None]:
     """Đóng pool sau mỗi test tích hợp."""
     yield
     await dispose_engine()
+
+
+@pytest.fixture(autouse=True)
+def _seed_tokenizer_cache(monkeypatch) -> None:
+    """Reuse the local tokenizer cache when available; unit tests still cover download."""
+    from pathlib import Path
+
+    cache = Path("data/rag/tokenizer")
+    if cache.exists():
+        monkeypatch.setenv("RAG_TOKENIZER_CACHE_DIR", str(cache))

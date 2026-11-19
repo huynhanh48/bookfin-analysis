@@ -1,9 +1,9 @@
 """Chỉ báo xu hướng: SMA, EMA, ADX, +DI/-DI và Ichimoku."""
 
 import numpy as np
-import talib
 
 from app.indicators import IndicatorOutput, as_float_array, last_value
+from app.indicators.native import native_series
 
 
 def compute_sma(close: np.ndarray, *, period: int = 20) -> IndicatorOutput:
@@ -16,7 +16,7 @@ def compute_sma(close: np.ndarray, *, period: int = 20) -> IndicatorOutput:
     Returns:
         `IndicatorOutput` với khoá `sma`.
     """
-    values = talib.SMA(as_float_array(close), timeperiod=period)
+    values = native_series("SMA", as_float_array(close), timeperiod=period)
     return IndicatorOutput(
         indicator="sma",
         parameters={"period": period},
@@ -35,7 +35,7 @@ def compute_ema(close: np.ndarray, *, period: int = 20) -> IndicatorOutput:
     Returns:
         `IndicatorOutput` với khoá `ema`.
     """
-    values = talib.EMA(as_float_array(close), timeperiod=period)
+    values = native_series("EMA", as_float_array(close), timeperiod=period)
     return IndicatorOutput(
         indicator="ema",
         parameters={"period": period},
@@ -68,9 +68,9 @@ def compute_adx(
     high_array = as_float_array(high)
     low_array = as_float_array(low)
     close_array = as_float_array(close)
-    adx = talib.ADX(high_array, low_array, close_array, timeperiod=period)
-    plus_di = talib.PLUS_DI(high_array, low_array, close_array, timeperiod=period)
-    minus_di = talib.MINUS_DI(high_array, low_array, close_array, timeperiod=period)
+    adx = native_series("ADX", high_array, low_array, close_array, timeperiod=period)
+    plus_di = native_series("PLUS_DI", high_array, low_array, close_array, timeperiod=period)
+    minus_di = native_series("MINUS_DI", high_array, low_array, close_array, timeperiod=period)
 
     adx_value = last_value(adx)
     signal = None
@@ -112,12 +112,13 @@ def compute_ichimoku(
     Returns:
         `IndicatorOutput` với tenkan, kijun, hai đường mây và vị thế giá so với mây.
     """
-    tenkan, kijun, senkou_a, senkou_b = talib.ICHIMOKU(
+    tenkan, kijun, senkou_a, senkou_b = native_series(
+        "ICHIMOKU",
         as_float_array(high),
         as_float_array(low),
-        tenkan_period,
-        kijun_period,
-        senkou_b_period,
+        tenkanperiod=tenkan_period,
+        kijunperiod=kijun_period,
+        senkoubperiod=senkou_b_period,
     )
     tenkan_value = last_value(tenkan)
     kijun_value = last_value(kijun)

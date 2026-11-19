@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -24,6 +24,7 @@ class HealthResponse(BaseModel):
     app: str
     version: str
     env: str
+    checks: dict[str, "CheckResult"] | None = None
 
 
 class CheckResult(BaseModel):
@@ -41,11 +42,11 @@ class ReadyResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse, summary="Liveness probe")
-async def health() -> HealthResponse:
+async def health(request: Request) -> HealthResponse:
     """Báo process còn sống.
 
-    Không truy cập database, Redis hay upstream nên luôn nhanh và độc lập, dùng
-    được cho healthcheck của container.
+    Khi RAG tắt, giữ liveness độc lập như trước. Khi RAG bật, bổ sung kiểm tra
+    database và consumer; readiness có HTTP status riêng tại /ready.
 
     Returns:
         Thông tin định danh service kèm trạng thái `ok`.
@@ -56,6 +57,9 @@ async def health() -> HealthResponse:
         app=settings.app_name,
         version=__version__,
         env=settings.app_env,
+        checks={"database": await _check_database(), "rag": await _check_rag(request)}
+        if settings.rag_enabled
+        else None,
     )
 
 
@@ -93,7 +97,7 @@ async def _check_redis() -> CheckResult:
 
 
 @router.get("/ready", response_model=ReadyResponse, summary="Readiness probe")
-async def ready(response: Response) -> ReadyResponse:
+async def ready(response: Response, request: Request) -> ReadyResponse:
     """Kiểm tra các phụ thuộc bắt buộc trước khi nhận traffic.
 
     Args:
@@ -105,8 +109,29 @@ async def ready(response: Response) -> ReadyResponse:
     checks = {
         "database": await _check_database(),
         "redis": await _check_redis(),
+        "rag": await _check_rag(request),
     }
     is_ready = all(check.ok for check in checks.values())
     if not is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return ReadyResponse(status="ready" if is_ready else "degraded", checks=checks)
+
+
+async def _check_rag(request: Request) -> CheckResult:
+    """Check the durable consumer and adapter state without a paid inference request."""
+    if not get_settings().rag_enabled:
+        return CheckResult(ok=True, detail="disabled")
+    runtime = getattr(request.app.state, "rag_runtime", None)
+    if (
+        runtime is None
+        or runtime.worker_error
+        or runtime.worker_task is None
+        or runtime.worker_task.done()
+    ):
+        return CheckResult(ok=False, detail="RAG consumer unavailable")
+    return CheckResult(
+        ok=True,
+        detail="consumer running; knowledge storage initialized"
+        if await runtime.knowledge.health_check()
+        else "consumer running; knowledge storage lazy",
+    )

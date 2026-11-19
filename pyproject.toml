@@ -3,7 +3,7 @@ name = "stock-research"
 version = "0.1.0"
 description = "Backend Python phân tích chứng khoán Việt Nam qua BookFin FCData Gateway"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 
 dependencies = [
     "fastapi",
@@ -17,7 +17,15 @@ dependencies = [
     "httpx",
     "websockets",
     "numpy",
-    "ta-lib",
+    "ta-lib==0.8.3",
+    "raganything==1.4.4",
+    "lightrag-hku==1.4.16",
+    "pgvector==0.5.1",
+    "openai==2.54.0",
+    "python-multipart>=0.0.34",
+    "pillow>=12.3.0",
+    "tavily-python==0.8.5",
+    "firecrawl-py==4.57.0",
 ]
 
 [dependency-groups]
@@ -26,6 +34,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "respx",
+    "mypy>=2.4.1",
 ]
 
 [build-system]
@@ -72,9 +81,43 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+addopts = "-m 'not integration'"
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: cần PostgreSQL, Redis hoặc dịch vụ ngoài đang chạy",
 ]
+
+# Type-check the new provider-independent contracts and migrated service.
+[tool.mypy]
+files = [
+    "src/app/indicators/engine.py",
+    "src/app/indicators/native.py",
+    "src/app/indicators/factory.py",
+    "src/app/indicators/custom.py",
+    "src/app/indicators/streaming.py",
+    "src/app/services/indicator_service.py",
+    "src/app/schemas/evidence.py",
+    "src/app/schemas/analysis.py",
+    "src/app/adapters/vision_adapter.py",
+    "src/app/adapters/news_search_adapter.py",
+    "src/app/adapters/tavily_adapter.py",
+    "src/app/adapters/firecrawl_adapter.py",
+    "src/app/adapters/rerank_adapter.py",
+    "src/app/adapters/rag_anything_adapter.py",
+    "src/app/services/rag_enrichment_service.py",
+    "src/app/services/rag_query_service.py",
+    "src/app/services/news_enrichment_service.py",
+    "src/app/services/analysis_normalization_service.py",
+    "src/app/services/technical_verification_service.py",
+    "src/app/repositories/evidence_repository.py",
+    "src/app/adapters/technical_evidence_adapter.py",
+    "src/app/repositories/analysis_repository.py",
+    "src/app/services/analysis_memory_service.py",
+    "src/app/core/rag_runtime.py",
+    "src/app/workers/rag_worker.py",
+]
+check_untyped_defs = true
+follow_imports = "silent"
+ignore_missing_imports = true

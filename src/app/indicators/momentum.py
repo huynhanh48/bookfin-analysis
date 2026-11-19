@@ -1,9 +1,9 @@
 """Chỉ báo động lượng: RSI, MACD và ROC."""
 
 import numpy as np
-import talib
 
 from app.indicators import IndicatorOutput, as_float_array, last_value
+from app.indicators.native import native_series
 
 
 def compute_rsi(close: np.ndarray, *, period: int = 14) -> IndicatorOutput:
@@ -17,7 +17,7 @@ def compute_rsi(close: np.ndarray, *, period: int = 14) -> IndicatorOutput:
         `IndicatorOutput` với khoá `rsi`; `signal` chỉ mô tả vùng quá mua/quá bán
         theo ngưỡng tham chiếu, không phải khuyến nghị giao dịch.
     """
-    values = talib.RSI(as_float_array(close), timeperiod=period)
+    values = native_series("RSI", as_float_array(close), timeperiod=period)
     rsi_value = last_value(values)
 
     signal = None
@@ -57,7 +57,8 @@ def compute_macd(
         `IndicatorOutput` với `macd`, `signal_line`, `histogram` và nhãn giao cắt.
     """
     close_array = as_float_array(close)
-    macd, signal_line, histogram = talib.MACD(
+    macd, signal_line, histogram = native_series(
+        "MACD",
         close_array,
         fastperiod=fast_period,
         slowperiod=slow_period,
@@ -110,7 +111,7 @@ def compute_roc(close: np.ndarray, *, period: int = 12) -> IndicatorOutput:
     Returns:
         `IndicatorOutput` với khoá `roc`.
     """
-    values = talib.ROC(as_float_array(close), timeperiod=period)
+    values = native_series("ROC", as_float_array(close), timeperiod=period)
     return IndicatorOutput(
         indicator="roc",
         parameters={"period": period},

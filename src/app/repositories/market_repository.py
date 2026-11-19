@@ -177,6 +177,7 @@ class MarketRepository:
         *,
         limit: int = 250,
         end: datetime | None = None,
+        price_basis: str | None = None,
     ) -> list[Candle]:
         """Đọc nến đã đóng, sắp xếp tăng dần theo thời gian.
 
@@ -190,6 +191,8 @@ class MarketRepository:
             Danh sách nến tăng dần theo `candle_open_time`.
         """
         filters = [Candle.symbol == symbol.upper(), Candle.timeframe == timeframe]
+        if price_basis is not None:
+            filters.append(Candle.price_basis == price_basis)
         if end is not None:
             filters.append(Candle.candle_open_time < end)
 

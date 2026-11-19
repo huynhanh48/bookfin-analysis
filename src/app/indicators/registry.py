@@ -6,8 +6,9 @@ Registry là điểm mở rộng duy nhất khi thêm chỉ báo mới: khai bá
 
 import hashlib
 import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass, field
+from functools import partial
 from typing import Any, Literal
 
 import numpy as np
@@ -22,6 +23,8 @@ from app.indicators import (
     volatility,
     volume,
 )
+from app.indicators.factory import NATIVE_SPECS
+from app.indicators.swing_divergence import DivergenceConfig
 
 InputKind = Literal["close", "volume", "cv", "hlc", "hlcv", "benchmark"]
 
@@ -190,11 +193,49 @@ INDICATORS: dict[str, IndicatorSpec] = {
         category="momentum",
         compute=divergence.compute_divergence,
         input_kind="hlc",
-        default_parameters={"rsi_period": 14, "pivot_length": 5, "max_gap_bars": 30},
+        default_parameters=asdict(DivergenceConfig()),
         warmup=15,
-        description="Phân kỳ thường và phân kỳ ẩn giữa giá và RSI.",
+        description="Regular divergence từ swing giá và swing MACD/RSI độc lập.",
     ),
 }
+
+
+def _native_spec_compute(name, *arrays, **parameters):
+    """Native registration callback for direct consumers of IndicatorSpec.compute."""
+    from app.indicators import last_value
+    from app.indicators.native import native_series, required_bars
+
+    fn, mapping, outputs = NATIVE_SPECS[name]
+    params = {target: parameters[key] for key, target in mapping.items()}
+    raw = native_series(fn, *arrays, **params)
+    values = raw if isinstance(raw, tuple) else (raw,)
+    return IndicatorOutput(
+        name,
+        parameters,
+        dict(zip(outputs, [last_value(v) for v in values], strict=True)),
+        required_bars(fn, **params),
+    )
+
+
+for _name, _defaults, _kind in [
+    ("wma", {"period": 20}, "close"),
+    ("ma", {"period": 20, "matype": 0}, "close"),
+    ("plus_di", {"period": 14}, "hlc"),
+    ("minus_di", {"period": 14}, "hlc"),
+    ("ad", {}, "hlcv"),
+    ("adosc", {"fast_period": 3, "slow_period": 10}, "hlcv"),
+    ("rvol_native", {"period": 20}, "volume"),
+    ("supertrend", {"period": 10, "multiplier": 3.0}, "hlc"),
+]:
+    INDICATORS[_name] = IndicatorSpec(
+        _name,
+        "native",
+        partial(_native_spec_compute, _name),
+        _kind,
+        _defaults,
+        0,
+        f"Native TA-Lib {NATIVE_SPECS[_name][0]}; explicit parameters.",
+    )
 
 
 # Bộ chỉ báo tính mặc định cho một mã, theo đặc tả Phase 1.
@@ -220,7 +261,7 @@ DEFAULT_INDICATOR_REQUESTS: tuple[tuple[str, dict[str, int | float]], ...] = (
     ("bb_width", {"period": 20, "stddev": 2.0}),
     ("atr", {"period": 14}),
     ("relative_strength", {"period": 20}),
-    ("divergence", {"rsi_period": 14, "pivot_length": 5, "max_gap_bars": 30}),
+    ("divergence", {}),
 )
 
 
@@ -242,6 +283,18 @@ def get_spec(name: str) -> IndicatorSpec:
         raise KeyError(f"Chỉ báo không tồn tại: {name}") from exc
 
 
+def _default_warmup(spec: IndicatorSpec) -> int:
+    """Expose installed lookback metadata, retaining custom formula warmups."""
+    from app.indicators.native import required_bars
+
+    if spec.name in NATIVE_SPECS:
+        fn, mapping, _ = NATIVE_SPECS[spec.name]
+        return required_bars(
+            fn, **{target: spec.default_parameters[key] for key, target in mapping.items()}
+        )
+    return spec.warmup
+
+
 def list_indicators() -> list[dict[str, Any]]:
     """Liệt kê chỉ báo đã đăng ký để trả cho client.
 
@@ -253,14 +306,55 @@ def list_indicators() -> list[dict[str, Any]]:
             "name": spec.name,
             "category": spec.category,
             "default_parameters": dict(spec.default_parameters),
-            "warmup": spec.warmup,
+            "warmup": _default_warmup(spec),
             "description": spec.description,
         }
         for spec in INDICATORS.values()
     ]
 
 
-def parameters_hash(parameters: dict[str, int | float | str]) -> str:
+def parse_request(text: str) -> tuple[str, dict[str, int | float]]:
+    """Phân tích cú pháp `name` hoặc `name:v1:v2` thành tên chỉ báo và tham số.
+
+    Tham số được gán theo đúng thứ tự khai báo trong `default_parameters` của
+    chỉ báo, ví dụ `macd:12:26:9` là fast, slow và signal period.
+
+    Args:
+        text: Chuỗi do client gửi, ví dụ `sma:20`.
+
+    Returns:
+        Cặp (tên chỉ báo, tham số ghi đè).
+
+    Raises:
+        ValueError: Khi tên chỉ báo không tồn tại, sai số tham số hoặc tham số
+            không phải số.
+    """
+    parts = [part.strip() for part in text.split(":")]
+    name = parts[0].lower()
+    spec = get_spec(name)
+    raw_parameters = [part for part in parts[1:] if part]
+    if len(raw_parameters) > len(spec.default_parameters):
+        raise ValueError(
+            f"Chỉ báo {name} nhận tối đa {len(spec.default_parameters)} tham số, "
+            f"nhận được {len(raw_parameters)}."
+        )
+    parameters: dict[str, int | float] = {}
+    for key, raw in zip(spec.default_parameters, raw_parameters, strict=False):
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"Tham số {key} của {name} không phải số: {raw}") from exc
+        parameters[key] = int(value) if value.is_integer() else value
+    if name == "divergence":
+        DivergenceConfig(**{**spec.default_parameters, **parameters})
+    elif name in NATIVE_SPECS:
+        from app.indicators.factory import build_indicator
+
+        build_indicator(name, {**spec.default_parameters, **parameters})
+    return name, parameters
+
+
+def parameters_hash(parameters: Mapping[str, Any]) -> str:
     """Tính hash canonical của tham số chỉ báo.
 
     Args:
@@ -283,7 +377,7 @@ def _insufficient(spec: IndicatorSpec, parameters: dict[str, Any]) -> IndicatorO
     )
 
 
-def compute_indicator(
+def _legacy_compute_indicator(
     name: str,
     ohlcv: Ohlcv,
     parameters: dict[str, int | float] | None = None,
@@ -345,3 +439,46 @@ def compute_default_set(
         compute_indicator(name, ohlcv, parameters, benchmark=benchmark)
         for name, parameters in DEFAULT_INDICATOR_REQUESTS
     ]
+
+
+def compute_indicator(
+    name: str,
+    ohlcv: Ohlcv,
+    parameters: dict[str, int | float] | None = None,
+    *,
+    benchmark: np.ndarray | None = None,
+) -> IndicatorOutput:
+    """Compatibility facade: project adapter calculates, old signal interpretation remains."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.indicators.engine import IndicatorFrame
+    from app.indicators.factory import build_indicator
+
+    spec = get_spec(name)
+    merged = {**spec.default_parameters, **(parameters or {})}
+    # Custom rules retain their causal event calculation; native/composites have full series.
+
+    if name not in NATIVE_SPECS and name not in ("adx", "bollinger", "bb_width", "rvol"):
+        return build_indicator(name, merged, benchmark).latest(ohlcv)
+    adapter = build_indicator(name, merged, benchmark)
+    # Array-only legacy entrypoint has no timestamp argument; synthetic positions are
+    # internal only. Service uses actual timestamps in IndicatorFrame for validation.
+    frame = IndicatorFrame(
+        ohlcv, [datetime(2000, 1, 1, tzinfo=UTC) + timedelta(days=i) for i in range(len(ohlcv))]
+    )
+    result = adapter.calculate(frame)
+    from app.indicators import last_value
+    from app.indicators.factory import interpret_signal
+
+    values = {k: last_value(v) for k, v in result.series.items()}
+    previous = {k: last_value(v[:-1]) for k, v in result.series.items()}
+    signal = interpret_signal(
+        name, values, previous, float(ohlcv.close[-1]) if len(ohlcv) else np.nan
+    )
+    return IndicatorOutput(
+        name,
+        dict(merged),
+        {k: last_value(v) for k, v in result.series.items()},
+        result.lookback + 1,
+        signal,
+    )

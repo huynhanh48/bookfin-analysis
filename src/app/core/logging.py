@@ -11,6 +11,9 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+job_id_var: ContextVar[str | None] = ContextVar("job_id", default=None)
+case_id_var: ContextVar[str | None] = ContextVar("case_id", default=None)
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 _RESERVED_LOG_ATTRS = frozenset(
@@ -62,6 +65,10 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
+        if job_id_var.get():
+            payload["job_id"] = job_id_var.get()
+        if case_id_var.get():
+            payload["case_id"] = case_id_var.get()
         request_id = request_id_var.get()
         if request_id is not None:
             payload["request_id"] = request_id

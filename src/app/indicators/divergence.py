@@ -1,68 +1,32 @@
-"""Phân kỳ giữa giá và RSI.
+"""Application divergence indicator backed by causal price/oscillator swing matching."""
 
-Chỉ dùng pivot đã xác nhận (pivot tại bar `i` chỉ được biết tại bar
-`i + pivot_length`), nên không có dữ liệu tương lai. Hai pivot được so sánh phải
-cách nhau không quá `max_gap_bars` nến.
-"""
+from dataclasses import asdict
 
 import numpy as np
-import talib
+import talib  # noqa: F401 -- compatibility for existing instrumentation
 
 from app.indicators import IndicatorOutput, as_float_array, last_value
-from app.indicators.market_structure import find_pivot_highs, find_pivot_lows
+from app.indicators.native import native_series
+from app.indicators.swing_divergence import DivergenceConfig, detect_divergence
 
-DIVERGENCE_KEYS = (
-    "bearish_regular",
-    "bullish_regular",
-    "bearish_hidden",
-    "bullish_hidden",
-)
+# Preserve existing clients' four aggregate keys; Hidden is intentionally disabled.
+DIVERGENCE_KEYS = ("bearish_regular", "bullish_regular", "bearish_hidden", "bullish_hidden")
 
 
-def _compare_pairs(
-    price_pivots: list[int],
-    rsi_values: np.ndarray,
-    prices: np.ndarray,
-    *,
-    max_gap_bars: int,
-    is_high: bool,
-) -> tuple[str | None, int | None]:
-    """So sánh cặp pivot gần nhất để tìm phân kỳ.
-
-    Args:
-        price_pivots: Index các pivot giá đã xác nhận.
-        rsi_values: Chuỗi RSI cùng độ dài với giá.
-        prices: Chuỗi giá tại pivot (high hoặc low).
-        max_gap_bars: Khoảng cách tối đa giữa hai pivot.
-        is_high: True khi xét pivot high.
-
-    Returns:
-        Tuple (loại phân kỳ, số nến giữa hai pivot) hoặc (None, None).
-    """
-    usable = [index for index in price_pivots if not np.isnan(rsi_values[index])]
-    if len(usable) < 2:
-        return None, None
-
-    first, second = usable[-2], usable[-1]
-    gap = second - first
-    if gap > max_gap_bars:
-        return None, None
-
-    price_first, price_second = float(prices[first]), float(prices[second])
-    rsi_first, rsi_second = float(rsi_values[first]), float(rsi_values[second])
-
-    if is_high:
-        if price_second > price_first and rsi_second < rsi_first:
-            return "bearish_regular", gap
-        if price_second < price_first and rsi_second > rsi_first:
-            return "bearish_hidden", gap
-    else:
-        if price_second < price_first and rsi_second > rsi_first:
-            return "bullish_regular", gap
-        if price_second > price_first and rsi_second < rsi_first:
-            return "bullish_hidden", gap
-
-    return None, gap
+def divergence_history(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, config: DivergenceConfig
+) -> list[dict]:
+    """Calculate RSI/MACD on Close once and detect all confirmed regular events."""
+    close = as_float_array(close)
+    rsi = native_series("RSI", close, timeperiod=config.rsi_period)
+    macd, _, histogram = native_series(
+        "MACD",
+        close,
+        fastperiod=config.macd_fast,
+        slowperiod=config.macd_slow,
+        signalperiod=config.macd_signal,
+    )
+    return detect_divergence(high, low, histogram if config.use_histogram else macd, rsi, config)
 
 
 def compute_divergence(
@@ -72,84 +36,33 @@ def compute_divergence(
     *,
     rsi_period: int = 14,
     pivot_length: int = 5,
-    max_gap_bars: int = 30,
+    max_gap_bars: int = 150,
+    **options: int | float,
 ) -> IndicatorOutput:
-    """Phát hiện phân kỳ thường và phân kỳ ẩn giữa giá và RSI.
+    """Return confirmation-bar pulses and full traceable historical event evidence.
 
-    Args:
-        high: Chuỗi giá cao nhất.
-        low: Chuỗi giá thấp nhất.
-        close: Chuỗi giá đóng cửa.
-        rsi_period: Chu kỳ RSI dùng để so sánh.
-        pivot_length: Số nến trái/phải khi xác nhận pivot.
-        max_gap_bars: Khoảng cách tối đa giữa hai pivot được so sánh.
-
-    Returns:
-        `IndicatorOutput` với bốn cờ phân kỳ và nhãn `signal` là loại phân kỳ mới
-        nhất; giá trị None khi chưa đủ dữ liệu.
+    First three parameters retain the original registry request format. Hidden
+    aggregate flags remain zero; historical events do not repeat on later candles.
     """
-    parameters: dict[str, int | float | str] = {
-        "rsi_period": rsi_period,
-        "pivot_length": pivot_length,
-        "max_gap_bars": max_gap_bars,
-    }
-    warmup = max(rsi_period + 1, pivot_length * 2 + 2)
-    empty = IndicatorOutput(
-        indicator="divergence",
-        parameters=parameters,
-        values=dict.fromkeys(DIVERGENCE_KEYS),
-        warmup=warmup,
+    cfg = DivergenceConfig(
+        rsi_period=rsi_period, pivot_length=pivot_length, max_gap_bars=max_gap_bars, **options
     )
-
-    close_array = as_float_array(close)
-    high_array = as_float_array(high)
-    low_array = as_float_array(low)
-    if close_array.size < warmup:
-        return empty
-
-    rsi_values = talib.RSI(close_array, timeperiod=rsi_period)
-    high_pivots = find_pivot_highs(high_array, pivot_length, pivot_length)
-    low_pivots = find_pivot_lows(low_array, pivot_length, pivot_length)
-
-    bearish_type, high_gap = _compare_pairs(
-        high_pivots, rsi_values, high_array, max_gap_bars=max_gap_bars, is_high=True
-    )
-    bullish_type, low_gap = _compare_pairs(
-        low_pivots, rsi_values, low_array, max_gap_bars=max_gap_bars, is_high=False
-    )
-
-    values = dict.fromkeys(DIVERGENCE_KEYS, 0.0)
-    signal = None
-
-    candidates: list[tuple[int, str]] = []
-    if bearish_type is not None and high_gap is not None:
-        values[bearish_type] = 1.0
-        candidates.append((high_gap, bearish_type))
-    if bullish_type is not None and low_gap is not None:
-        values[bullish_type] = 1.0
-        candidates.append((low_gap, bullish_type))
-
-    if candidates:
-        candidates.sort()
-        signal = candidates[0][1]
-
+    warmup = cfg.pivot_length + cfg.pivot_right + cfg.tolerance_bars + 1
+    values = dict.fromkeys(DIVERGENCE_KEYS, 0.0 if len(close) >= warmup else None)
+    events = divergence_history(high, low, close, cfg) if len(close) >= warmup else []
+    active = [event for event in events if event["confirmed_index"] == len(close) - 1]
+    for event in active:
+        values[f"{event['direction']}_regular"] = 1.0
     return IndicatorOutput(
         indicator="divergence",
-        parameters=parameters,
+        parameters={**asdict(cfg), "algorithm_version": "swing-div-3"},
         values=values,
         warmup=warmup,
-        signal=signal,
+        signal=f"{active[0]['direction']}_regular" if active else None,
+        events=events,
     )
 
 
 def latest_rsi(close: np.ndarray, *, period: int = 14) -> float | None:
-    """Giá trị RSI cuối cùng, dùng cho test và debug.
-
-    Args:
-        close: Chuỗi giá đóng cửa.
-        period: Chu kỳ RSI.
-
-    Returns:
-        Giá trị RSI cuối hoặc None khi chưa đủ dữ liệu.
-    """
-    return last_value(talib.RSI(as_float_array(close), timeperiod=period))
+    """Return the latest finite RSI for callers using the original debug helper."""
+    return last_value(native_series("RSI", as_float_array(close), timeperiod=period))

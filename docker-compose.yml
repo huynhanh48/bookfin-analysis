@@ -19,8 +19,12 @@ x-app-environment: &app-environment
   API_PREFIX: ${API_PREFIX:-/api/v1}
   # Trong container, host của PostgreSQL là tên service `postgres`, không phải localhost.
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stock}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-stock_research}
+  RAG_ENABLED: ${RAG_ENABLED:-false}
+  RAG_STORAGE_DIR: /app/data/rag
+  RAG_UPLOAD_DIR: /app/data/uploads
   REDIS_ENABLED: ${REDIS_ENABLED:-false}
-  REDIS_URL: redis://redis:6379/0
+  REDIS_URL: redis://${REDIS_USERNAME:-admin}:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+  RAG_REDIS_MIRROR_ENABLED: ${RAG_REDIS_MIRROR_ENABLED:-false}
   FCDATA_BASE_URL: ${FCDATA_BASE_URL:-https://fcdata.bookfin.vn}
   FCDATA_WS_URL: ${FCDATA_WS_URL:-wss://fcdata.bookfin.vn/ws}
   FCDATA_TIMEOUT_SECONDS: ${FCDATA_TIMEOUT_SECONDS:-15}
@@ -32,6 +36,7 @@ x-app-environment: &app-environment
 
 # Mount source để code trong container luôn trùng với code trên máy.
 x-app-volumes: &app-volumes
+  - rag_data:/app/data
   - ./src:/app/src
   - ./tests:/app/tests
   - ./alembic:/app/alembic
@@ -70,19 +75,20 @@ services:
       - cache
     restart: unless-stopped
 
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
+    environment:
+      REDIS_USERNAME: ${REDIS_USERNAME:-admin}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command: ["sh", "/usr/local/etc/redis/start.sh"]
 
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
 
     volumes:
       - redis_data:/data
+      - ./docker/redis/start.sh:/usr/local/etc/redis/start.sh:ro
 
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --user "$$REDIS_USERNAME" ping | grep -q PONG']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -155,3 +161,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  rag_data:

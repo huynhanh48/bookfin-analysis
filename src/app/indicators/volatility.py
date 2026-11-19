@@ -1,9 +1,9 @@
 """Chỉ báo biến động: Bollinger Bands, BB Width và ATR."""
 
 import numpy as np
-import talib
 
 from app.indicators import IndicatorOutput, as_float_array, last_value
+from app.indicators.native import native_series
 
 
 def compute_bollinger(
@@ -23,7 +23,8 @@ def compute_bollinger(
         `IndicatorOutput` với `upper`, `middle`, `lower` và `percent_b`.
     """
     close_array = as_float_array(close)
-    upper, middle, lower = talib.BBANDS(
+    upper, middle, lower = native_series(
+        "BBANDS",
         close_array,
         timeperiod=period,
         nbdevup=stddev,
@@ -71,7 +72,8 @@ def compute_bb_width(
         `IndicatorOutput` với khoá `bb_width`.
     """
     close_array = as_float_array(close)
-    upper, middle, lower = talib.BBANDS(
+    upper, middle, lower = native_series(
+        "BBANDS",
         close_array,
         timeperiod=period,
         nbdevup=stddev,
@@ -115,7 +117,8 @@ def compute_atr(
     Returns:
         `IndicatorOutput` với khoá `atr`.
     """
-    values = talib.ATR(
+    values = native_series(
+        "ATR",
         as_float_array(high),
         as_float_array(low),
         as_float_array(close),

@@ -13,6 +13,7 @@ from app.indicators.registry import (
     get_spec,
     list_indicators,
     parameters_hash,
+    parse_request,
 )
 from app.indicators.volatility import compute_atr, compute_bollinger
 
@@ -26,6 +27,8 @@ def make_ohlcv(size: int = SAMPLE_SIZE, seed: int = 7) -> Ohlcv:
     high = close + np.abs(rng.normal(0, 100, size))
     low = close - np.abs(rng.normal(0, 100, size))
     open_ = close + rng.normal(0, 50, size)
+    high = np.maximum(high, open_)
+    low = np.minimum(low, open_)
     volume = np.abs(rng.normal(1_000_000, 200_000, size))
     return Ohlcv(open=open_, high=high, low=low, close=close, volume=volume)
 
@@ -55,6 +58,24 @@ def test_parameters_hash_on_dinh_theo_thu_tu_khoa() -> None:
         {"stddev": 2.0, "period": 20}
     )
     assert parameters_hash({"period": 20}) != parameters_hash({"period": 50})
+
+
+def test_parse_request_gan_tham_so_theo_thu_tu_khai_bao() -> None:
+    assert parse_request("sma:20") == ("sma", {"period": 20})
+    assert parse_request("macd:12:26:9") == (
+        "macd",
+        {"fast_period": 12, "slow_period": 26, "signal_period": 9},
+    )
+    assert parse_request("rsi") == ("rsi", {})
+
+
+def test_parse_request_bao_loi_khi_tham_so_khong_hop_le() -> None:
+    with pytest.raises(ValueError):
+        parse_request("sma:20:50")
+    with pytest.raises(ValueError):
+        parse_request("sma:abc")
+    with pytest.raises(KeyError):
+        parse_request("khong-ton-tai")
 
 
 def test_chuoi_ngan_tra_insufficient_history() -> None:

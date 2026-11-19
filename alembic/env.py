@@ -26,6 +26,11 @@ config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Leave official LightRAG-owned tables out of business-schema autogeneration."""
+    return not (type_ == "table" and reflected and name.lower().startswith("lightrag_"))
+
+
 def run_migrations_offline() -> None:
     """Chạy migration ở chế độ offline, chỉ sinh SQL, không kết nối database."""
     context.configure(
@@ -34,6 +39,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -50,6 +56,7 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():

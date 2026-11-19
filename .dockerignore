@@ -12,3 +12,6 @@ dist/
 build/
 tests/
 references/
+
+# Persistent chart originals and graph files belong in volumes, not images.
+data/

@@ -151,7 +151,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             code="validation_error",
             message="Tham số request không hợp lệ.",
-            details={"errors": exc.errors()},
+            # Pydantic validator contexts may contain ValueError objects; raw
+            # input may contain secrets/nonfinite numbers. Return safe primitives.
+            details={
+                "errors": [
+                    {"loc": list(error["loc"]), "msg": error["msg"], "type": error["type"]}
+                    for error in exc.errors()
+                ]
+            },
         )
 
     @app.exception_handler(StarletteHTTPException)

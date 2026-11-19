@@ -8,6 +8,7 @@ Chạy độc lập với API::
 
 import argparse
 import asyncio
+from datetime import datetime
 
 from app.core.config import get_settings
 from app.core.database import dispose_engine, session_scope
@@ -27,10 +28,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--all", action="store_true", help="Chạy cho toàn bộ mã đang hoạt động.")
     parser.add_argument("--limit", type=int, default=200, help="Số mã tối đa khi dùng --all.")
     parser.add_argument("--timeframe", default="1D", choices=["1D", "1W"], help="Khung thời gian.")
+    parser.add_argument(
+        "--end",
+        type=datetime.fromisoformat,
+        default=None,
+        help="Replay cutoff ISO8601 with timezone; excludes unclosed bars at that time.",
+    )
     return parser.parse_args()
 
 
-async def run(symbols: list[str], timeframe: str, run_all: bool, limit: int) -> None:
+async def run(
+    symbols: list[str], timeframe: str, run_all: bool, limit: int, end: datetime | None = None
+) -> None:
     """Tính lại chỉ báo cho danh sách mã.
 
     Args:
@@ -38,9 +47,13 @@ async def run(symbols: list[str], timeframe: str, run_all: bool, limit: int) -> 
         timeframe: Khung thời gian.
         run_all: Chạy cho toàn bộ mã đang hoạt động.
         limit: Số mã tối đa khi chạy toàn bộ.
+        end: Aware historical replay cutoff; omitted for latest closed candles.
     """
     settings = get_settings()
     configure_logging(settings.log_level)
+    from app.indicators.native import configure_unstable_periods
+
+    configure_unstable_periods(settings.indicator_unstable_periods)
 
     async with session_scope() as session:
         market_repository = MarketRepository(session)
@@ -63,7 +76,7 @@ async def run(symbols: list[str], timeframe: str, run_all: bool, limit: int) -> 
                 continue
             seen.add(ticker)
             try:
-                result = await service.recompute(ticker, timeframe)
+                result = await service.recompute(ticker, timeframe, end=end)
             except InsufficientDataError as exc:
                 logger.warning("indicator_skipped", extra={"symbol": ticker, "detail": exc.message})
                 continue
@@ -83,7 +96,7 @@ async def main() -> None:
     args = _parse_args()
     symbols = [item.strip().upper() for item in args.symbols.split(",") if item.strip()]
     try:
-        await run(symbols, args.timeframe, args.all, args.limit)
+        await run(symbols, args.timeframe, args.all, args.limit, args.end)
     finally:
         await dispose_engine()
 

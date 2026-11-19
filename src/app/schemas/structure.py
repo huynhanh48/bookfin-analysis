@@ -115,7 +115,7 @@ class StructureSnapshotOut(BaseModel):
     swings: list[SwingPointOut] = Field(default_factory=list)
     events: list[StructureEventOut] = Field(default_factory=list)
     latest_event: StructureEventOut | None = None
-    engine_version: str = "ms-1.0.0"
+    engine_version: str = "ms-2.0.0-ta0.8.3"
     config_hash: str = ""
     candle_finality: Literal["closed", "forming"] = "closed"
     data_quality: dict[str, Any] = Field(default_factory=dict)

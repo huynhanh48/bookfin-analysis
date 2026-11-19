@@ -34,9 +34,10 @@ from enum import StrEnum
 from typing import Any, Literal
 
 import numpy as np
-import talib
 
-ENGINE_VERSION = "ms-1.0.0"
+from app.indicators.native import native_series, unstable_metadata
+
+ENGINE_VERSION = "ms-2.0.0-ta0.8.3"
 
 
 class PivotType(StrEnum):
@@ -131,6 +132,8 @@ class MarketStructureConfig:
     """
 
     pivot_length: int = 5
+    left_bars: int | None = None
+    right_bars: int | None = None
     mode: Literal["pine_compatible", "enhanced"] = "pine_compatible"
     break_confirmation: Literal["close", "wick"] = "close"
     require_crossing: bool = False
@@ -142,6 +145,8 @@ class MarketStructureConfig:
     emit_mss: bool = False
     detect_failed_breakout: bool = False
     failed_breakout_window: int = 3
+    volume_period: int = 20
+    min_volume_ratio: float = 0.0
 
     def __post_init__(self) -> None:
         """Kiểm tra ràng buộc giữa chế độ và các bộ lọc mở rộng.
@@ -150,10 +155,19 @@ class MarketStructureConfig:
             ValueError: Khi chế độ `pine_compatible` được đặt kèm bộ lọc mở rộng,
                 hoặc khi tham số không hợp lệ.
         """
+        if any(not isinstance(v, int) or v < 1 for v in (self.left, self.right)):
+            raise ValueError("left_bars/right_bars must be positive integers")
+        if (
+            self.volume_period < 2
+            or not np.isfinite(self.min_volume_ratio)
+            or self.min_volume_ratio < 0
+        ):
+            raise ValueError("Invalid volume confirmation configuration")
         if self.pivot_length < 1:
             raise ValueError("pivot_length phải >= 1")
         if self.mode == "pine_compatible":
             enhanced = {
+                "min_volume_ratio": self.min_volume_ratio,
                 "equal_tolerance_pct": self.equal_tolerance_pct,
                 "breakout_buffer_atr": self.breakout_buffer_atr,
                 "emit_mss": self.emit_mss,
@@ -169,6 +183,8 @@ class MarketStructureConfig:
         """Trả cấu hình dưới dạng dict để tính hash."""
         return {
             "pivot_length": self.pivot_length,
+            "left_bars": self.left,
+            "right_bars": self.right,
             "mode": self.mode,
             "break_confirmation": self.break_confirmation,
             "require_crossing": self.require_crossing,
@@ -180,12 +196,28 @@ class MarketStructureConfig:
             "emit_mss": self.emit_mss,
             "detect_failed_breakout": self.detect_failed_breakout,
             "failed_breakout_window": self.failed_breakout_window,
+            "volume_period": self.volume_period,
+            "min_volume_ratio": self.min_volume_ratio,
         }
+
+    @property
+    def left(self) -> int:
+        """Effective left window; legacy symmetric pivot_length remains the default."""
+        return self.pivot_length if self.left_bars is None else self.left_bars
+
+    @property
+    def right(self) -> int:
+        """Confirmation delay: a pivot is unavailable until this many later bars close."""
+        return self.pivot_length if self.right_bars is None else self.right_bars
 
     @property
     def config_hash(self) -> str:
         """Hash 12 ký tự của cấu hình, dùng làm khoá idempotency."""
-        payload = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
+        payload = json.dumps(
+            {**self.to_dict(), "unstable_periods": unstable_metadata()},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -441,7 +473,7 @@ class MarketStructureEngine:
         index = len(self._times) - 1
         events: list[StructureEvent] = []
 
-        pivot_high_index = index - self._config.pivot_length
+        pivot_high_index = index - self._config.right
         got_pivot_high = self._is_pivot_high(pivot_high_index)
         got_pivot_low = self._is_pivot_low(pivot_high_index)
 
@@ -542,22 +574,22 @@ class MarketStructureEngine:
 
     def _is_pivot_high(self, index: int) -> bool:
         """Kiểm tra bar tại `index` có phải pivot high đã được xác nhận."""
-        length = self._config.pivot_length
-        if index < length or index + length >= len(self._highs):
+        left, right = self._config.left, self._config.right
+        if index < left or index + right >= len(self._highs):
             return False
         candidate = self._highs[index]
-        return candidate > max(self._highs[index - length : index]) and candidate > max(
-            self._highs[index + 1 : index + length + 1]
+        return candidate > max(self._highs[index - left : index]) and candidate > max(
+            self._highs[index + 1 : index + right + 1]
         )
 
     def _is_pivot_low(self, index: int) -> bool:
         """Kiểm tra bar tại `index` có phải pivot low đã được xác nhận."""
-        length = self._config.pivot_length
-        if index < length or index + length >= len(self._lows):
+        left, right = self._config.left, self._config.right
+        if index < left or index + right >= len(self._lows):
             return False
         candidate = self._lows[index]
-        return candidate < min(self._lows[index - length : index]) and candidate < min(
-            self._lows[index + 1 : index + length + 1]
+        return candidate < min(self._lows[index - left : index]) and candidate < min(
+            self._lows[index + 1 : index + right + 1]
         )
 
     def _register_high(self, index: int) -> None:
@@ -668,7 +700,8 @@ class MarketStructureEngine:
         if len(self._times) < period + 1:
             self._atr_cache = (len(self._times), None)
             return None
-        values = talib.ATR(
+        values = native_series(
+            "ATR",
             np.asarray(self._highs, dtype=np.float64),
             np.asarray(self._lows, dtype=np.float64),
             np.asarray(self._closes, dtype=np.float64),
@@ -686,6 +719,21 @@ class MarketStructureEngine:
             return False
         body = abs(self._closes[index] - self._opens[index])
         return body > atr * self._config.displacement_atr_multiple
+
+    def _volume_confirmed(self, index: int) -> bool:
+        """Optional causal confirmation against preceding bars, excluding breakout volume."""
+        if self._config.min_volume_ratio == 0:
+            return True
+        if index < self._config.volume_period:
+            return False
+        average = native_series(
+            "SMA", np.asarray(self._volumes[:index]), timeperiod=self._config.volume_period
+        )[-1]
+        return bool(
+            np.isfinite(average)
+            and average > 0
+            and self._volumes[index] / average >= self._config.min_volume_ratio
+        )
 
     def _check_bullish_break(self, index: int) -> StructureEvent | None:
         """Kiểm tra phá kháng cự tại nến `index` và cập nhật bias."""
@@ -707,7 +755,7 @@ class MarketStructureEngine:
                 triggered = triggered and self._closes[index - 1] <= level
             observed = self._closes[index]
 
-        if not triggered:
+        if not triggered or not self._volume_confirmed(index):
             return None
 
         is_change = self._bias is BreakBias.BEARISH
@@ -728,7 +776,7 @@ class MarketStructureEngine:
         event = StructureEvent(
             event_type=event_type,
             pivot_time=self._times[self._last_high_index],
-            confirmed_at=self._times[self._last_high_index + self._config.pivot_length],
+            confirmed_at=self._times[self._last_high_index + self._config.right],
             broken_at=self._times[index],
             price=self._last_high,
             break_level=level,
@@ -761,7 +809,7 @@ class MarketStructureEngine:
                 triggered = triggered and self._closes[index - 1] >= level
             observed = self._closes[index]
 
-        if not triggered:
+        if not triggered or not self._volume_confirmed(index):
             return None
 
         is_change = self._bias is BreakBias.BULLISH
@@ -782,7 +830,7 @@ class MarketStructureEngine:
         event = StructureEvent(
             event_type=event_type,
             pivot_time=self._times[self._last_low_index],
-            confirmed_at=self._times[self._last_low_index + self._config.pivot_length],
+            confirmed_at=self._times[self._last_low_index + self._config.right],
             broken_at=self._times[index],
             price=self._last_low,
             break_level=level,
@@ -880,7 +928,7 @@ class MarketStructureEngine:
 
     def _update_insufficient_flag(self) -> None:
         """Đánh dấu khi chuỗi chưa đủ dài để xác nhận pivot."""
-        required = self._config.pivot_length * 2 + 1
+        required = self._config.left + self._config.right + 1
         self._quality["insufficient_history"] = len(self._times) < required
 
     def _last_swing(self, kind: PivotType) -> SwingPoint | None:

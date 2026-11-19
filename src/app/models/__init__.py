@@ -10,3 +10,13 @@ from app.models.ingestion import IngestionRun
 from app.models.symbol import Symbol
 
 __all__ = ["Candle", "IndicatorSnapshot", "IngestionRun", "StructureEvent", "Symbol"]
+
+from app.models.analysis_case import AnalysisCase, CaseEmbedding  # noqa: F401
+from app.models.analysis_evidence import (  # noqa: F401
+    AnalysisClaim,
+    AnalysisEnrichment,
+    AnalysisEvidence,
+    NewsDocument,
+    ProviderCache,
+)
+from app.models.rag_document import RagDocument  # noqa: F401

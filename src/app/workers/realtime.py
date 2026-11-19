@@ -23,6 +23,7 @@ from app.core.redis import close_redis_client, get_redis_client
 from app.fcdata.mapper import CandleRecord
 from app.fcdata.stream import FcDataStream, QuoteTick
 from app.indicators.market_structure import CandleBar
+from app.indicators.native import configure_unstable_periods
 from app.repositories.indicator_repository import IndicatorRepository
 from app.repositories.market_repository import MarketRepository
 from app.services.indicator_service import IndicatorService
@@ -281,6 +282,7 @@ async def main() -> None:
     args = _parse_args()
     settings = get_settings()
     configure_logging(settings.log_level)
+    configure_unstable_periods(settings.indicator_unstable_periods)
 
     symbols = [item.strip().upper() for item in args.symbols.split(",") if item.strip()]
     indices = [item.strip().upper() for item in args.indices.split(",") if item.strip()]

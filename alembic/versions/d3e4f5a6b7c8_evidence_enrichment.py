@@ -57,29 +57,29 @@ def upgrade() -> None:
     )
     op.execute(
         """CREATE TABLE analysis_enrichments (
-	case_id UUID NOT NULL, 
-	original_input JSONB NOT NULL, 
-	observations JSONB NOT NULL, 
-	resolved_context JSONB NOT NULL, 
-	technical_snapshot JSONB NOT NULL, 
-	normalized_text TEXT NOT NULL, 
-	verification_summary JSONB NOT NULL, 
-	diagnostics JSONB NOT NULL, 
-	version VARCHAR(40) NOT NULL, 
-	CONSTRAINT pk_analysis_enrichments PRIMARY KEY (case_id), 
+	case_id UUID NOT NULL,
+	original_input JSONB NOT NULL,
+	observations JSONB NOT NULL,
+	resolved_context JSONB NOT NULL,
+	technical_snapshot JSONB NOT NULL,
+	normalized_text TEXT NOT NULL,
+	verification_summary JSONB NOT NULL,
+	diagnostics JSONB NOT NULL,
+	version VARCHAR(40) NOT NULL,
+	CONSTRAINT pk_analysis_enrichments PRIMARY KEY (case_id),
 	CONSTRAINT fk_analysis_enrichments_case_id_analysis_cases FOREIGN KEY(case_id) REFERENCES analysis_cases (id) ON DELETE CASCADE
 )
 """
     )
     op.execute(
         """CREATE TABLE analysis_claims (
-	id UUID NOT NULL, 
-	case_id UUID NOT NULL, 
-	claim_type VARCHAR(50) NOT NULL, 
-	source_type VARCHAR(20) NOT NULL, 
-	verification_status VARCHAR(40) NOT NULL, 
-	payload JSONB NOT NULL, 
-	CONSTRAINT pk_analysis_claims PRIMARY KEY (id), 
+	id UUID NOT NULL,
+	case_id UUID NOT NULL,
+	claim_type VARCHAR(50) NOT NULL,
+	source_type VARCHAR(20) NOT NULL,
+	verification_status VARCHAR(40) NOT NULL,
+	payload JSONB NOT NULL,
+	CONSTRAINT pk_analysis_claims PRIMARY KEY (id),
 	CONSTRAINT fk_analysis_claims_case_id_analysis_cases FOREIGN KEY(case_id) REFERENCES analysis_cases (id) ON DELETE CASCADE
 )
 """
@@ -90,20 +90,20 @@ def upgrade() -> None:
     op.execute("CREATE INDEX ix_analysis_claims_case_id ON analysis_claims (case_id)")
     op.execute(
         """CREATE TABLE news_documents (
-	id UUID NOT NULL, 
-	source_url TEXT NOT NULL, 
-	canonical_url TEXT NOT NULL, 
-	title TEXT NOT NULL, 
-	publisher TEXT NOT NULL, 
-	published_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITH TIME ZONE, 
-	retrieved_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	content TEXT NOT NULL, 
-	content_hash VARCHAR(64) NOT NULL, 
-	relevance DOUBLE PRECISION NOT NULL, 
-	associated_symbol VARCHAR(20) NOT NULL, 
-	associated_sector VARCHAR(200), 
-	source_type VARCHAR(30) NOT NULL, 
+	id UUID NOT NULL,
+	source_url TEXT NOT NULL,
+	canonical_url TEXT NOT NULL,
+	title TEXT NOT NULL,
+	publisher TEXT NOT NULL,
+	published_at TIMESTAMP WITH TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITH TIME ZONE,
+	retrieved_at TIMESTAMP WITH TIME ZONE NOT NULL,
+	content TEXT NOT NULL,
+	content_hash VARCHAR(64) NOT NULL,
+	relevance DOUBLE PRECISION NOT NULL,
+	associated_symbol VARCHAR(20) NOT NULL,
+	associated_sector VARCHAR(200),
+	source_type VARCHAR(30) NOT NULL,
 	CONSTRAINT pk_news_documents PRIMARY KEY (id)
 )
 """
@@ -118,13 +118,13 @@ def upgrade() -> None:
     )
     op.execute(
         """CREATE TABLE analysis_evidence (
-	id UUID NOT NULL, 
-	case_id UUID NOT NULL, 
-	news_id UUID, 
-	source_type VARCHAR(30) NOT NULL, 
-	payload JSONB NOT NULL, 
-	CONSTRAINT pk_analysis_evidence PRIMARY KEY (id), 
-	CONSTRAINT fk_analysis_evidence_case_id_analysis_cases FOREIGN KEY(case_id) REFERENCES analysis_cases (id) ON DELETE CASCADE, 
+	id UUID NOT NULL,
+	case_id UUID NOT NULL,
+	news_id UUID,
+	source_type VARCHAR(30) NOT NULL,
+	payload JSONB NOT NULL,
+	CONSTRAINT pk_analysis_evidence PRIMARY KEY (id),
+	CONSTRAINT fk_analysis_evidence_case_id_analysis_cases FOREIGN KEY(case_id) REFERENCES analysis_cases (id) ON DELETE CASCADE,
 	CONSTRAINT fk_analysis_evidence_news_id_news_documents FOREIGN KEY(news_id) REFERENCES news_documents (id)
 )
 """
@@ -133,10 +133,10 @@ def upgrade() -> None:
     op.execute("CREATE INDEX ix_analysis_evidence_source_type ON analysis_evidence (source_type)")
     op.execute(
         """CREATE TABLE evidence_provider_cache (
-	key VARCHAR(64) NOT NULL, 
-	payload JSONB NOT NULL, 
-	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
-	expires_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	key VARCHAR(64) NOT NULL,
+	payload JSONB NOT NULL,
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	CONSTRAINT pk_evidence_provider_cache PRIMARY KEY (key)
 )
 """

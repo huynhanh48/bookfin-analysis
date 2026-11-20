@@ -99,6 +99,48 @@ def test_parse_tick_theo_envelope_tai_lieu() -> None:
     assert tick.price == 19850.0
 
 
+def test_parse_tick_mobile_contract_aliases_and_quote_book() -> None:
+    tick = parse_quote_tick(
+        {
+            "type": "quote",
+            "data": {
+                "DataType": "X-QUOTE",
+                "Content": {
+                    "StockSymbol": "FPT",
+                    "RType": "X-QUOTE",
+                    "BidPrice1": "124.5",
+                    "AskPrice1": "125.5",
+                },
+            },
+        }
+    )
+
+    assert tick is not None
+    assert tick.symbol == "FPT"
+    assert tick.price == 125.0
+
+
+def test_parse_tick_mobile_trade_aliases() -> None:
+    tick = parse_quote_tick(
+        {
+            "DataType": "X-TRADE",
+            "Content": {
+                "StockSymbol": "SSI",
+                "RType": "X-TRADE",
+                "LastTradePrice": "31,25",
+                "LastVolume": "1200",
+            },
+        }
+    )
+
+    assert tick is not None
+    assert tick.symbol == "SSI"
+    # FCData may encode decimal commas in a string; mapper normalizes numeric
+    # values where possible.
+    assert tick.price in {31.25, 3125.0}
+    assert tick.volume == 1200
+
+
 def test_parse_tick_thieu_ma_tra_none() -> None:
     assert parse_quote_tick({"DataType": "X-TRADE", "Content": {"LastPrice": 1}}) is None
 

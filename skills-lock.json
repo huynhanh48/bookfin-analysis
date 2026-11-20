@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "skills": {
+    "klinecharts": {
+      "source": "klinecharts/KLineChart",
+      "commit": "4a67cb9c0ac5395b0f0c65197ba5c1230b09cda0",
+      "sourceType": "github",
+      "skillPath": "skills/klinecharts/SKILL.md",
+      "computedHash": "ba2095d3fba3017f0e02ec28385b3c64b74aaa672991ecfc8912e870ea44dc5e"
+    },
+    "langchain-agent-monitoring": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "8883a4a278b5e68d85f0d4a988d84accd246c7f0",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-agent-monitoring/SKILL.md",
+      "computedHash": "388520ea49a649fffb28e11ad18f5566acbbc49c929b794fd9588e1f0b9dd30b"
+    },
+    "langchain-agent-tracing": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "8883a4a278b5e68d85f0d4a988d84accd246c7f0",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-agent-tracing/SKILL.md",
+      "computedHash": "358bc61029933171d6c8844a2b5a3873bbac5d4b2a2e2bd8f4ffeabb66ddd703"
+    },
+    "langchain-build-agent": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "8883a4a278b5e68d85f0d4a988d84accd246c7f0",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-build-agent/SKILL.md",
+      "computedHash": "7632682b9610a2f51285554b5c0477d621ddafa5e7780ea7177b9ae17380ec6b"
+    },
+    "langchain-eval-engineering": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "8883a4a278b5e68d85f0d4a988d84accd246c7f0",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-eval-engineering/SKILL.md",
+      "computedHash": "04520c46216489586faf3f8cc48fee8097fb8187edda69bca600363de493f373"
+    },
+    "postgresql": {
+      "source": "suleyman/fullstack-agent-skills",
+      "commit": "920a44ab3c702aa7a5bc7e62f51a05c8764c2962",
+      "sourceType": "github",
+      "skillPath": "skills/postgresql/SKILL.md",
+      "computedHash": "3f4fedaf4777a1ff9eb6da9c4ec00d172d1945c66f510beeef3834689fbc8ad8"
+    },
+    "python-fastapi": {
+      "source": "suleyman/fullstack-agent-skills",
+      "commit": "920a44ab3c702aa7a5bc7e62f51a05c8764c2962",
+      "sourceType": "github",
+      "skillPath": "skills/python-fastapi/SKILL.md",
+      "computedHash": "6291342be4eed9bcb45b1f6ac69074bf3f747c06adc84cb423852050785dcc8f"
+    }
+  }
+}

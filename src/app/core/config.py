@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         quote_stale_after_seconds: Ngưỡng đánh dấu snapshot giá là cũ.
         benchmark_symbol: Mã chỉ số dùng cho chỉ báo sức mạnh tương đối.
         admin_api_key: API key bắt buộc cho endpoint thao tác như backfill.
+        worker_heartbeat_dir: Thư mục heartbeat của các role worker.
+        worker_shutdown_grace_seconds: Thời gian chờ job đang chạy khi shutdown.
+        worker_idempotency_ttl_seconds: TTL marker idempotency theo ngày.
+        worker_lock_fail_open: Cho job chạy khi Redis lock lỗi.
+        worker_session_close_time: Giờ đóng phiên để realtime kích hoạt job.
+        worker_session_check_seconds: Chu kỳ kiểm tra giờ đóng phiên.
     """
 
     model_config = SettingsConfigDict(
@@ -125,6 +131,48 @@ class Settings(BaseSettings):
     rag_rerank_fail_open: bool = True
 
     rag_redis_mirror_enabled: bool = False
+
+    websocket_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    )
+    chart_realtime_enabled: bool = True
+    chart_realtime_refresh_seconds: float = Field(default=5, ge=2, le=300)
+    chart_realtime_tick_seconds: float = Field(default=2, ge=1, le=60)
+    chart_realtime_single_symbol_seconds: float = Field(default=1, ge=0.5, le=60)
+
+    # Scheduler chạy worker định kỳ trong container riêng.
+    scheduler_enabled: bool = True
+    scheduler_timezone: str = "Asia/Ho_Chi_Minh"
+    scheduler_run_on_start: bool = False
+    scheduler_poll_seconds: float = Field(default=20, ge=5, le=300)
+    scheduler_job_timeout_seconds: float = Field(default=1800, ge=60, le=21600)
+    scheduler_ingest_concurrency: int = Field(default=4, ge=1, le=20)
+    scheduler_scan_limit: int = Field(default=600, ge=1, le=1000)
+    scheduler_heartbeat_file: str = "/tmp/scheduler.heartbeat"
+    scheduler_holidays: str = ""
+    ingest_incremental_days: int = Field(default=5, ge=1, le=60)
+    chart_realtime_concurrency: int = Field(default=4, ge=1, le=20)
+
+    # Worker engine dùng chung cho scheduler/executor/realtime.
+    worker_heartbeat_dir: str = "/tmp/bookfin-workers"
+    worker_heartbeat_seconds: float = Field(default=15, ge=1, le=300)
+    worker_shutdown_grace_seconds: float = Field(default=25, ge=1, le=300)
+    worker_idempotency_ttl_seconds: int = Field(default=172800, ge=60)
+    worker_lock_fail_open: bool = True
+    worker_session_close_time: str = "15:00"
+    worker_session_check_seconds: float = Field(default=30, ge=5, le=300)
+
+    websocket_max_connections: int = Field(default=500, ge=1)
+    websocket_queue_size: int = Field(default=100, ge=1, le=10000)
+    websocket_max_subscriptions: int = Field(default=20, ge=1, le=100)
+    websocket_max_message_bytes: int = Field(default=16384, ge=256, le=1048576)
+    websocket_idle_seconds: float = Field(default=60, ge=10)
+    websocket_send_timeout_seconds: float = Field(default=10, ge=1)
 
     redis_enabled: bool = False
     redis_url: str = "redis://localhost:6379/0"

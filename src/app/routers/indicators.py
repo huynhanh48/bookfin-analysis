@@ -4,6 +4,7 @@ Router đọc kết quả đã precompute qua service; chỉ tính tại chỗ k
 snapshot và service đánh dấu `computed_on_demand`.
 """
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query
@@ -12,12 +13,54 @@ from app.core.dependencies import IndicatorServiceDep
 from app.core.exceptions import InvalidRequestError
 from app.indicators.registry import parse_request
 from app.routers.market import to_candle_out
-from app.schemas.divergence import DivergenceQuery
+from app.schemas.divergence import (
+    DivergenceQuery,
+    DivergenceScanResponse,
+    DivergenceScanRowOut,
+)
 from app.schemas.indicators import IndicatorSeriesResponse, IndicatorSetResponse
 from app.schemas.market import Timeframe
 from app.schemas.structure import StructureSnapshotOut
 
 router = APIRouter(prefix="/indicators", tags=["indicators"])
+
+
+@router.get(
+    "/divergences/scan",
+    response_model=DivergenceScanResponse,
+    summary="Quét mã có phân kỳ đã xác nhận trong N phiên gần nhất",
+)
+async def scan_divergences(
+    service: IndicatorServiceDep,
+    timeframe: Timeframe = "1D",
+    days: Annotated[int, Query(ge=1, le=60, description="Số phiên gần nhất")] = 1,
+    limit: Annotated[int, Query(ge=1, le=1000, description="Số mã tối đa")] = 600,
+    symbols: Annotated[
+        list[str] | None,
+        Query(description="Lặp lại tham số để giới hạn danh sách mã"),
+    ] = None,
+) -> DivergenceScanResponse:
+    """Quét phân kỳ trên nến đã đóng cho toàn bộ danh mục.
+
+    Args:
+        service: Service chỉ báo.
+        timeframe: Khung thời gian.
+        days: Chỉ lấy tín hiệu có `confirmed_at` trong `days` phiên gần nhất.
+        limit: Số mã tối đa khi không truyền `symbols`.
+        symbols: Danh sách mã cụ thể.
+
+    Returns:
+        `DivergenceScanResponse` với các tín hiệu mới nhất trước.
+    """
+    rows = await service.scan_divergences(
+        symbols=symbols or None, timeframe=timeframe, days=days, limit=limit
+    )
+    return DivergenceScanResponse(
+        timeframe=timeframe,
+        days=days,
+        count=len(rows),
+        items=[DivergenceScanRowOut.model_validate(row, from_attributes=True) for row in rows],
+    )
 
 
 @router.get(
@@ -61,6 +104,14 @@ async def get_series(
     service: IndicatorServiceDep,
     timeframe: Timeframe = "1D",
     limit: Annotated[int, Query(ge=20, le=1000, description="Số nến tối đa")] = 250,
+    end: Annotated[
+        datetime | None,
+        Query(description="Chỉ dùng nến trước mốc này (nạp lùi lịch sử)"),
+    ] = None,
+    include_provisional: Annotated[
+        bool,
+        Query(description="Ghép nến đang chạy của phiên hiện tại (chỉ 1D)"),
+    ] = True,
     indicator: Annotated[
         list[str] | None,
         Query(
@@ -78,6 +129,8 @@ async def get_series(
         service: Service chỉ báo.
         timeframe: Khung thời gian.
         limit: Số nến tối đa.
+        end: Mốc thời gian để nạp lùi lịch sử; bỏ trống để lấy dữ liệu mới nhất.
+        include_provisional: Ghép thêm nến đang chạy với chỉ báo tạm tính.
         indicator: Danh sách chỉ báo cần tính; bỏ trống để dùng bộ mặc định.
 
     Returns:
@@ -94,7 +147,15 @@ async def get_series(
             message = exc.args[0] if isinstance(exc, KeyError) else str(exc)
             raise InvalidRequestError(str(message)) from exc
 
-    result = await service.get_series(symbol, timeframe, requests=planned, limit=limit)
+    result = await service.get_series(
+        symbol,
+        timeframe,
+        requests=planned,
+        limit=limit,
+        end=end,
+        include_provisional=include_provisional,
+    )
+    divergences = next((item for item in result.series if item.indicator == "divergence"), None)
     return IndicatorSeriesResponse(
         symbol=result.symbol,
         timeframe=result.timeframe,
@@ -102,6 +163,11 @@ async def get_series(
         count=len(result.candles),
         candles=[to_candle_out(candle) for candle in result.candles],
         series=result.series,
+        # `events` giữ cho client cũ; local/structural tách riêng cho client mới.
+        local_divergences=divergences.local_divergences if divergences else [],
+        structural_divergences=divergences.structural_divergences if divergences else [],
+        provisional=result.provisional,
+        last_confirmed_at=result.last_confirmed_at,
     )
 
 
@@ -142,6 +208,7 @@ async def get_divergence(
     result = await service.get_series(
         symbol, options.timeframe, requests=[("divergence", parameters)], limit=options.limit
     )
+    divergences = next((item for item in result.series if item.indicator == "divergence"), None)
     return IndicatorSeriesResponse(
         symbol=result.symbol,
         timeframe=result.timeframe,
@@ -149,4 +216,6 @@ async def get_divergence(
         count=len(result.candles),
         candles=[to_candle_out(c) for c in result.candles],
         series=result.series,
+        local_divergences=divergences.local_divergences if divergences else [],
+        structural_divergences=divergences.structural_divergences if divergences else [],
     )

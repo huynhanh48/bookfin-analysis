@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 Timeframe = Literal["1D", "1W"]
+# FCData chỉ trả nến ngày; khung 1W được dựng từ 1D khi đọc nên không backfill riêng.
+BackfillTimeframe = Literal["1D"]
 
 
 class SymbolOut(BaseModel):
@@ -103,13 +105,13 @@ class BackfillRequest(BaseModel):
 
     Attributes:
         symbols: Danh sách mã cần nạp.
-        timeframe: Khung thời gian.
+        timeframe: Khung thời gian; chỉ nhận `1D` vì 1W được dựng từ 1D khi đọc.
         start: Ngày bắt đầu, mặc định lùi theo cấu hình.
         end: Ngày kết thúc, mặc định hôm nay theo múi giờ thị trường.
     """
 
     symbols: list[str] = Field(min_length=1, max_length=50, examples=[["FPT", "HPG"]])
-    timeframe: Timeframe = "1D"
+    timeframe: BackfillTimeframe = "1D"
     start: date | None = None
     end: date | None = None
 

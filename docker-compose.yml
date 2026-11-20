@@ -3,15 +3,17 @@
 # - `postgres`: PostgreSQL 17 + pgvector, luôn chạy.
 # - `redis`: Redis 8, thuộc profile `cache` (chỉ chạy khi được bật).
 # - `api`: FastAPI + uvicorn --reload, mount ./src nên sửa code là cập nhật ngay.
-# - `worker`: chạy worker (backfill / indicator / realtime) với cùng source đã mount.
+# - `scheduler`: chạy role scheduler của worker engine, profile `workers`.
+# - `realtime`: role realtime (stream tick + trigger đóng phiên), profile `realtime`.
+# - `worker`: executor một lần, chạy job bất kỳ qua `docker compose run`.
 # - `migrate`: chạy Alembic một lần, dùng khi cần apply migration.
 #
-# Lệnh thường dùng:
-#   docker compose up -d --build                 # postgres + api
-#   docker compose --profile cache up -d         # thêm redis
-#   docker compose run --rm migrate              # alembic upgrade head
-#   docker compose run --rm worker python -m app.workers.backfill --symbols FPT --days 400
-#   docker compose run --rm worker python -m app.workers.indicator_worker --symbols FPT
+# Mọi role worker dùng chung một image và cùng Job Registry:
+#   docker compose --profile workers up -d scheduler
+#   docker compose --profile realtime up -d realtime
+#   docker compose run --rm worker python -m app.workers list
+#   docker compose run --rm worker python -m app.workers run ingest-close --param symbols=FPT
+#   docker compose run --rm worker python -m app.workers run recompute-indicators --param limit=20
 
 x-app-environment: &app-environment
   APP_ENV: ${APP_ENV:-development}
@@ -121,6 +123,8 @@ services:
         condition: service_healthy
 
   worker:
+    # Dùng chung image với API/scheduler/realtime: một engine, một bộ dependency.
+    image: bookfin-analysis-api:latest
     build:
       context: .
       target: dev
@@ -130,13 +134,98 @@ services:
     command:
       - python
       - -m
-      - app.workers.indicator_worker
-      - --all
-      - --limit
-      - "20"
+      - app.workers
+      - run
+      - divergence-scan
+      - --param
+      - limit=20
 
     environment: *app-environment
     volumes: *app-volumes
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # Job một lần tự thoát; healthcheck HTTP của image không áp dụng.
+    healthcheck:
+      disable: true
+
+  scheduler:
+    # Dùng lại image API (cùng Dockerfile target dev) để không build lại dependency nặng.
+    image: bookfin-analysis-api:latest
+    build:
+      context: .
+      target: dev
+    profiles:
+      - workers
+    restart: unless-stopped
+
+    command: ["python", "-m", "app.workers", "scheduler"]
+
+    environment: *app-environment
+    volumes: *app-volumes
+    stop_grace_period: 30s
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - app.workers
+        - health
+        - --role
+        - scheduler
+        - --max-age
+        - "120"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  realtime:
+    image: bookfin-analysis-api:latest
+    build:
+      context: .
+      target: dev
+    profiles:
+      - realtime
+    restart: unless-stopped
+
+    # Role realtime: cache nến đang hình thành + trigger job sau giờ đóng phiên.
+    # Watchlist đổi qua REALTIME_WORKER_SYMBOLS.
+    command:
+      - sh
+      - -c
+      - >-
+        python -m app.workers realtime
+        --symbols "${REALTIME_WORKER_SYMBOLS:-FPT,SSI,HPG,VNM,VIC}"
+        --recompute-on-close
+
+    environment:
+      <<: *app-environment
+      REALTIME_WORKER_SYMBOLS: ${REALTIME_WORKER_SYMBOLS:-FPT,SSI,HPG,VNM,VIC}
+    volumes: *app-volumes
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - app.workers
+        - health
+        - --role
+        - realtime
+        - --max-age
+        - "120"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     depends_on:
       postgres:

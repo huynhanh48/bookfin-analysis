@@ -9,12 +9,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from app.core.config import Settings
-from app.core.exceptions import UpstreamError
+from app.core.exceptions import InvalidRequestError, UpstreamError
 from app.core.logging import get_logger
 from app.fcdata.client import FcDataClient
 from app.fcdata.mapper import format_vn_date, map_catalog_payload, map_daily_ohlc_payload
 from app.repositories.market_repository import SOURCE, MarketRepository
 from app.schemas.market import BackfillResult
+from app.services.weekly_candles import DAILY_TIMEFRAME, WEEKLY_TIMEFRAME
 
 logger = get_logger(__name__)
 
@@ -90,7 +91,15 @@ class IngestionService:
 
         Returns:
             `BackfillStats` với số nến ghi được và số bản ghi bị loại.
+
+        Raises:
+            InvalidRequestError: Khi yêu cầu backfill khung khác `1D`.
         """
+        if timeframe != DAILY_TIMEFRAME:
+            raise InvalidRequestError(
+                f"Backfill chỉ hỗ trợ {DAILY_TIMEFRAME}; khung {WEEKLY_TIMEFRAME} "
+                "được dựng từ nến ngày khi đọc."
+            )
         ticker = symbol.upper()
         end_date = end or datetime.now(tz=self._settings.market_tz).date()
         start_date = start or end_date - timedelta(days=self._settings.backfill_lookback_days)

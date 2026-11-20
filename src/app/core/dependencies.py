@@ -157,6 +157,7 @@ def get_indicator_service(
     settings: AppSettings,
     market_repository: MarketRepositoryDep,
     indicator_repository: IndicatorRepositoryDep,
+    fcdata: FcData,
 ) -> IndicatorService:
     """Tạo service chỉ báo cho một request.
 
@@ -164,14 +165,18 @@ def get_indicator_service(
         settings: Cấu hình ứng dụng.
         market_repository: Repository thị trường để đọc nến.
         indicator_repository: Repository chỉ báo và sự kiện cấu trúc.
+        fcdata: Client FCData để lấy bar đang chạy.
 
     Returns:
         `IndicatorService` đã gắn đủ phụ thuộc.
     """
+    from app.services.provisional_bar import ProvisionalBarProvider
+
     return IndicatorService(
         settings=settings,
         market_repository=market_repository,
         indicator_repository=indicator_repository,
+        provisional=ProvisionalBarProvider(settings, fcdata),
     )
 
 

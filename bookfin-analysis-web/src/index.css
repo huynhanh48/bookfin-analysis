@@ -1,0 +1,167 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color: rgba(255, 255, 255, 0.87);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: #051441;
+  background-color: rgba(22, 119, 255, 0.08);
+  border-bottom: solid 1px #ebedf1;
+}
+
+.statusbar .brand {
+  font-weight: 700;
+  color: #1677ff;
+}
+
+.statusbar .statusbar-action {
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #1677ff;
+  background: transparent;
+  border: 1px solid rgba(22, 119, 255, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.statusbar .statusbar-action:hover {
+  background: rgba(22, 119, 255, 0.08);
+}
+
+.statusbar .status {
+  margin-left: auto;
+  color: #5f6b7a;
+}
+
+.statusbar .status[data-level="error"] {
+  color: #d32f2f;
+}
+
+#container {
+  height: calc(100vh - 28px - 6px);
+}
+
+/* Hàng chỉ báo custom do BookFin chèn vào modal Indicator của KLineChart Pro. */
+.klinecharts-pro-indicator-modal-list .row {
+  display: flex;
+  align-items: center;
+}
+
+.klinecharts-pro-indicator-modal-list .bookfin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--klinecharts-pro-text-color, #051441);
+  cursor: pointer;
+}
+
+.bookfin-gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  fill: var(--klinecharts-pro-text-color, #051441);
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.bookfin-gear:hover {
+  opacity: 1;
+  fill: var(--klinecharts-pro-primary-color, #1677ff);
+}
+
+.bookfin-gear svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Modal cài đặt chỉ báo custom: dùng lại khung modal của Pro nhưng đặt ngoài
+   root của Pro nên phải khai báo màu tường minh (không kế thừa CSS variable). */
+.bookfin-settings-modal {
+  position: fixed;
+  z-index: 1000;
+}
+
+.bookfin-settings-modal .inner {
+  background-color: #ffffff;
+  color: #051441;
+}
+
+.bookfin-settings-modal .title-container {
+  color: #051441;
+  border-bottom-color: #ebedf1;
+}
+
+.bookfin-settings-modal .close-icon {
+  fill: #051441;
+}
+
+.bookfin-settings-modal .close-icon:hover {
+  fill: #1677ff;
+}
+
+.bookfin-settings-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+
+.bookfin-settings-content .bookfin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--klinecharts-pro-text-color, #051441);
+  cursor: pointer;
+}
+
+.bookfin-settings-close {
+  padding: 6px 18px;
+  font-size: 14px;
+  color: #ffffff;
+  background: var(--klinecharts-pro-primary-color, #1677ff);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* Menu công cụ vẽ của Pro bị giới hạn 320px nên cắt mất các mục cuối
+   (Segment, Arrow). Cho menu cao theo nội dung và hiện scrollbar rõ ràng. */
+.klinecharts-pro-drawing-bar .item .list {
+  max-height: min(560px, calc(100vh - 120px));
+}
+
+.klinecharts-pro-drawing-bar .item .list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.klinecharts-pro-drawing-bar .item .list::-webkit-scrollbar-thumb {
+  background-color: #c9ced6;
+  border-radius: 4px;
+}

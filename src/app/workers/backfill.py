@@ -3,7 +3,11 @@
 Chạy độc lập với API::
 
     uv run python -m app.workers.backfill --symbols FPT,HPG --days 400
+    uv run python -m app.workers.backfill --symbols FPT --days 1200
     uv run python -m app.workers.backfill --sync-symbols
+
+Khung 1W không nạp riêng: nến tuần được dựng từ nến ngày đã đóng khi đọc.
+Dùng `--days` lớn (khoảng 1200 ngày) khi cần đủ lịch sử cho Ichimoku tuần.
 """
 
 import argparse
@@ -24,7 +28,12 @@ def _parse_args() -> argparse.Namespace:
     """Đọc tham số dòng lệnh của worker."""
     parser = argparse.ArgumentParser(description="Backfill nến lịch sử từ FCData Gateway.")
     parser.add_argument("--symbols", default="", help="Danh sách mã, phân tách bằng dấu phẩy.")
-    parser.add_argument("--timeframe", default="1D", choices=["1D", "1W"], help="Khung thời gian.")
+    parser.add_argument(
+        "--timeframe",
+        default="1D",
+        choices=["1D"],
+        help="Khung thời gian nạp. Chỉ 1D: khung 1W được dựng từ nến ngày khi đọc.",
+    )
     parser.add_argument("--days", type=int, default=None, help="Số ngày lịch cần nạp.")
     parser.add_argument(
         "--sync-symbols",

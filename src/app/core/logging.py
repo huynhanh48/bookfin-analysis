@@ -13,6 +13,8 @@ from typing import Any
 
 job_id_var: ContextVar[str | None] = ContextVar("job_id", default=None)
 case_id_var: ContextVar[str | None] = ContextVar("case_id", default=None)
+worker_job_var: ContextVar[str | None] = ContextVar("worker_job", default=None)
+worker_run_id_var: ContextVar[str | None] = ContextVar("worker_run_id", default=None)
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
@@ -69,6 +71,10 @@ class JsonFormatter(logging.Formatter):
             payload["job_id"] = job_id_var.get()
         if case_id_var.get():
             payload["case_id"] = case_id_var.get()
+        if worker_job_var.get():
+            payload["worker_job"] = worker_job_var.get()
+        if worker_run_id_var.get():
+            payload["worker_run_id"] = worker_run_id_var.get()
         request_id = request_id_var.get()
         if request_id is not None:
             payload["request_id"] = request_id

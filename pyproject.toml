@@ -98,6 +98,7 @@ files = [
     "src/app/indicators/custom.py",
     "src/app/indicators/streaming.py",
     "src/app/services/indicator_service.py",
+    "src/app/services/weekly_candles.py",
     "src/app/schemas/evidence.py",
     "src/app/schemas/analysis.py",
     "src/app/adapters/vision_adapter.py",
@@ -117,6 +118,19 @@ files = [
     "src/app/services/analysis_memory_service.py",
     "src/app/core/rag_runtime.py",
     "src/app/workers/rag_worker.py",
+    "src/app/workers/engine.py",
+    "src/app/workers/registry.py",
+    "src/app/workers/locks.py",
+    "src/app/workers/schedule.py",
+    "src/app/workers/heartbeat.py",
+    "src/app/workers/bootstrap.py",
+    "src/app/workers/cli.py",
+    "src/app/workers/jobs/common.py",
+    "src/app/workers/jobs/ingestion.py",
+    "src/app/workers/jobs/indicators.py",
+    "src/app/workers/jobs/rag.py",
+    "src/app/workers/roles/scheduler.py",
+    "src/app/workers/roles/realtime.py",
 ]
 check_untyped_defs = true
 follow_imports = "silent"

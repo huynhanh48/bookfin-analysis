@@ -1,4 +1,6 @@
-"""Worker precompute chỉ báo và sự kiện cấu trúc thị trường.
+"""Worker precompute chỉ báo (tương thích ngược).
+
+Entrypoint mới: `python -m app.workers run recompute-indicators ...`.
 
 Chạy độc lập với API::
 
@@ -11,14 +13,7 @@ import asyncio
 from datetime import datetime
 
 from app.core.config import get_settings
-from app.core.database import dispose_engine, session_scope
-from app.core.exceptions import InsufficientDataError
-from app.core.logging import configure_logging, get_logger
-from app.repositories.indicator_repository import IndicatorRepository
-from app.repositories.market_repository import MarketRepository
-from app.services.indicator_service import IndicatorService
-
-logger = get_logger(__name__)
+from app.workers.bootstrap import close_worker_resources, execute_job, prepare
 
 
 def _parse_args() -> argparse.Namespace:
@@ -40,7 +35,7 @@ def _parse_args() -> argparse.Namespace:
 async def run(
     symbols: list[str], timeframe: str, run_all: bool, limit: int, end: datetime | None = None
 ) -> None:
-    """Tính lại chỉ báo cho danh sách mã.
+    """Tính lại chỉ báo cho danh sách mã qua worker engine.
 
     Args:
         symbols: Danh sách mã chỉ định.
@@ -50,45 +45,18 @@ async def run(
         end: Aware historical replay cutoff; omitted for latest closed candles.
     """
     settings = get_settings()
-    configure_logging(settings.log_level)
-    from app.indicators.native import configure_unstable_periods
-
-    configure_unstable_periods(settings.indicator_unstable_periods)
-
-    async with session_scope() as session:
-        market_repository = MarketRepository(session)
-        indicator_repository = IndicatorRepository(session)
-        service = IndicatorService(
-            settings=settings,
-            market_repository=market_repository,
-            indicator_repository=indicator_repository,
-        )
-
-        targets = list(symbols)
-        if run_all:
-            rows, _ = await market_repository.list_symbols(active_only=True, limit=limit, offset=0)
-            targets.extend(row.symbol for row in rows)
-
-        seen: set[str] = set()
-        for symbol in targets:
-            ticker = symbol.upper()
-            if ticker in seen:
-                continue
-            seen.add(ticker)
-            try:
-                result = await service.recompute(ticker, timeframe, end=end)
-            except InsufficientDataError as exc:
-                logger.warning("indicator_skipped", extra={"symbol": ticker, "detail": exc.message})
-                continue
-            logger.info(
-                "indicator_computed",
-                extra={
-                    "symbol": ticker,
-                    "timeframe": timeframe,
-                    "indicators": len(result.results),
-                    "candles": result.candles_used,
-                },
-            )
+    prepare(settings)
+    params: dict[str, object] = {
+        "symbols": symbols,
+        "include_all": run_all,
+        "limit": limit,
+        "timeframe": timeframe,
+    }
+    if end is not None:
+        params["end"] = end
+    outcome = await execute_job(settings, "recompute-indicators", params)
+    if outcome.status in {"failed", "timed_out"}:
+        raise SystemExit(1)
 
 
 async def main() -> None:
@@ -98,7 +66,7 @@ async def main() -> None:
     try:
         await run(symbols, args.timeframe, args.all, args.limit, args.end)
     finally:
-        await dispose_engine()
+        await close_worker_resources()
 
 
 if __name__ == "__main__":

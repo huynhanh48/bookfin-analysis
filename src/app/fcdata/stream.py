@@ -13,6 +13,7 @@ Giao thức thật của gateway (đã kiểm chứng trong `references/gateway-
 """
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
@@ -125,18 +126,30 @@ def parse_quote_tick(raw: dict[str, Any]) -> QuoteTick | None:
     if raw.get("type") == "quote" and isinstance(raw.get("data"), dict):
         raw = raw["data"]
 
-    data_type = str(raw.get("DataType") or raw.get("Channel") or "").strip()
+    # Preserve the envelope type before unwrapping SSI's Content object.
+    data_type = (
+        str(raw.get("DataType") or raw.get("dataType") or raw.get("Channel") or "").strip().upper()
+    )
     # Object SSI bọc dữ liệu trong `Content`; envelope dạng tài liệu thì dữ liệu
     # nằm ngay trên object, nên phải chấp nhận cả hai.
     content = _decode_content(raw) or raw
 
+    r_type = str(content.get("RType") or content.get("rType") or "").strip().upper()
+    index_code = (
+        content.get("IndexId")
+        or content.get("IndexID")
+        or content.get("IndexCode")
+        or content.get("indexId")
+        or content.get("indexCode")
+    )
     symbol = (
-        content.get("Symbol")
+        index_code
+        or content.get("Symbol")
         or content.get("symbol")
+        or content.get("StockSymbol")
         or raw.get("Symbol")
         or raw.get("Code")
-        or content.get("IndexId")
-        or content.get("IndexID")
+        or raw.get("StockSymbol")
         or raw.get("IndexId")
     )
     if not symbol:
@@ -144,13 +157,46 @@ def parse_quote_tick(raw: dict[str, Any]) -> QuoteTick | None:
 
     price = to_float(
         content.get("LastPrice")
+        or content.get("ClosePrice")
+        or content.get("MatchedPrice")
+        or content.get("MatchPrice")
+        or content.get("LastTradePrice")
+        or content.get("LastMatchedPrice")
+        or content.get("Price")
         or content.get("EstMatchedPrice")
         or content.get("Close")
         or content.get("IndexValue")
+        or content.get("IndexValEst")
         or content.get("Avg")
         or content.get("AvgPrice")
     )
-    volume = to_int(content.get("LastVol") or content.get("TotalVol") or content.get("AllQty"))
+    if (index_code or r_type == "MI" or data_type == "MI") and (price is None or price == 0):
+        price = to_float(content.get("IndexValEst") or content.get("PriorIndexValue"))
+    if price is None:
+        bid = to_float(content.get("BidPrice1") or content.get("bidPrice1"))
+        ask = to_float(content.get("AskPrice1") or content.get("askPrice1"))
+        if bid and bid > 0 and ask and ask > 0:
+            price = (bid + ask) / 2
+        elif bid and bid > 0:
+            price = bid
+        elif ask and ask > 0:
+            price = ask
+    volume = to_int(
+        content.get("LastVol")
+        or content.get("LastVolume")
+        or content.get("TotalVol")
+        or content.get("AllQty")
+        or content.get("TotalMatchVol")
+        or content.get("TotalTradedVol")
+    )
+
+    # Some gateway deployments forward change-only quote frames. Keep those
+    # frames as dirty signals; the chart service will reconcile OHLCV via REST.
+    if price is None and not any(
+        to_float(content.get(key)) is not None
+        for key in ("Change", "PriceChange", "RatioChange", "PerPriceChange")
+    ):
+        return None
 
     return QuoteTick(
         symbol=str(symbol).strip().upper(),
@@ -246,6 +292,8 @@ class FcDataStream:
                 await self._handle_frame(frame)
         finally:
             heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
 
     async def _await_welcome(self, connection: WebSocketConnection) -> None:
         """Đọc message chào đầu tiên và ghi log protocol."""

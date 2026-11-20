@@ -12,7 +12,6 @@ __pycache__/
 build/
 dist/
 # user ignore
-fe/
 /agents
 .agents/
 AGENTS.md
@@ -20,7 +19,8 @@ docs/
 indicators/
 references/
 .vscode/
-bookfin-analysis-web/
+# bookfin-analysis-web/
+deliverables/
 
 # Virtual environments
 .venv/

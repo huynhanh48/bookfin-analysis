@@ -43,7 +43,7 @@ class DivergenceEventOut(BaseModel):
     """
 
     id: str
-    kind: Literal["regular"]
+    kind: Literal["regular", "hidden"]
     direction: Literal["bullish", "bearish"]
     start_index: int
     end_index: int
@@ -87,3 +87,69 @@ class DivergenceQuery(BaseModel):
         """Apply exactly the same cross-field constraints as the production engine."""
         DivergenceConfig(**self.model_dump(exclude={"timeframe", "limit"}))
         return self
+
+
+class StructuralDivergenceOut(BaseModel):
+    """Phân kỳ cấu trúc gộp từ nhiều phân kỳ local liên tiếp.
+
+    Attributes:
+        id: Định danh ổn định của cấu trúc.
+        kind: regular hoặc hidden.
+        direction: bullish hoặc bearish.
+        indicator: Chỉ báo dùng để gộp.
+        start_index: Chỉ số pivot đầu trong chuỗi nến.
+        end_index: Chỉ số pivot cuối.
+        start_time: Thời điểm mở nến của pivot đầu.
+        end_time: Thời điểm mở nến của pivot cuối.
+        start_price: Giá tại pivot đầu.
+        end_price: Giá tại pivot cuối.
+        start_value: Giá trị chỉ báo tại pivot đầu.
+        end_value: Giá trị chỉ báo tại pivot cuối.
+        pivot_count: Số pivot tạo nên cấu trúc (2 local = 3 pivot).
+        confirmed_at: Nến đóng xác nhận cấu trúc.
+        member_ids: ID của các local divergence thành phần.
+        label: Nhãn hiển thị, ví dụ `STR RSI Bear`.
+    """
+
+    id: str
+    kind: Literal["regular", "hidden"]
+    direction: Literal["bullish", "bearish"]
+    indicator: Literal["MACD", "RSI"]
+    start_index: int
+    end_index: int
+    start_time: datetime
+    end_time: datetime
+    start_price: float
+    end_price: float
+    start_value: float
+    end_value: float
+    pivot_count: int
+    confirmed_at: datetime
+    member_ids: list[str] = Field(default_factory=list)
+    label: str
+
+
+class DivergenceScanRowOut(BaseModel):
+    """Một phân kỳ đã xác nhận trong lượt quét danh mục."""
+
+    symbol: str
+    timeframe: str
+    kind: Literal["regular", "hidden"]
+    direction: Literal["bullish", "bearish"]
+    indicator: str
+    start_time: datetime
+    end_time: datetime
+    start_price: float
+    end_price: float
+    confirmed_at: datetime
+    label: str
+    alerts: list[str] = Field(default_factory=list)
+
+
+class DivergenceScanResponse(BaseModel):
+    """Kết quả quét phân kỳ cho cả danh mục."""
+
+    timeframe: str
+    days: int
+    count: int
+    items: list[DivergenceScanRowOut] = Field(default_factory=list)

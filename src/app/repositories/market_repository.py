@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,18 +89,28 @@ class MarketRepository:
         active_only: bool = True,
         limit: int = 200,
         offset: int = 0,
+        query: str | None = None,
     ) -> tuple[list[Symbol], int]:
-        """Đọc danh mục mã có phân trang.
+        """Đọc danh mục mã có phân trang và tìm kiếm.
 
         Args:
             active_only: Chỉ lấy mã còn giao dịch.
             limit: Số bản ghi tối đa.
             offset: Vị trí bắt đầu.
+            query: Chuỗi tìm kiếm; khớp mã hoặc tên công ty, không phân biệt hoa thường.
 
         Returns:
             Tuple (danh sách mã, tổng số mã khớp điều kiện).
         """
         filters = [Symbol.active.is_(True)] if active_only else []
+        if query:
+            pattern = f"%{query.strip().upper()}%"
+            filters.append(
+                or_(
+                    func.upper(Symbol.symbol).like(pattern),
+                    func.upper(Symbol.company_name).like(pattern),
+                )
+            )
         count_statement = select(func.count()).select_from(Symbol).where(*filters)
         total = int((await self._session.execute(count_statement)).scalar_one())
 

@@ -59,6 +59,10 @@ async def list_symbols(
     service: MarketServiceDep,
     limit: Annotated[int, Query(ge=1, le=1000, description="Số mã mỗi trang")] = 200,
     offset: Annotated[int, Query(ge=0, description="Vị trí bắt đầu")] = 0,
+    q: Annotated[
+        str | None,
+        Query(max_length=64, description="Tìm theo mã hoặc tên công ty"),
+    ] = None,
 ) -> SymbolListResponse:
     """Đọc danh mục mã đã đồng bộ từ gateway.
 
@@ -66,11 +70,12 @@ async def list_symbols(
         service: Service dữ liệu thị trường.
         limit: Số bản ghi tối đa.
         offset: Vị trí bắt đầu.
+        q: Chuỗi tìm kiếm theo mã hoặc tên công ty.
 
     Returns:
         Danh sách mã kèm tổng số bản ghi.
     """
-    rows, total = await service.list_symbols(limit=limit, offset=offset)
+    rows, total = await service.list_symbols(limit=limit, offset=offset, query=q)
     return SymbolListResponse(
         items=[SymbolOut.model_validate(row) for row in rows],
         total=total,

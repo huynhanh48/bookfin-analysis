@@ -17,7 +17,8 @@ from app.core.redis import close_redis_client
 from app.fcdata.client import FcDataClient
 from app.middleware.access_logging import AccessLoggingMiddleware
 from app.middleware.request_id import RequestIdMiddleware
-from app.routers import analysis, health, indicators, market, rag
+from app.routers import analysis, health, indicators, market, rag, realtime
+from app.services.realtime_service import MarketChannelAuthorizer, RealtimeService
 
 logger = get_logger(__name__)
 
@@ -39,7 +40,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.indicators.native import configure_unstable_periods
 
     configure_unstable_periods(settings.indicator_unstable_periods)
+    app.state.realtime = RealtimeService(
+        MarketChannelAuthorizer(),
+        queue_size=settings.websocket_queue_size,
+        max_connections=settings.websocket_max_connections,
+        max_subscriptions=settings.websocket_max_subscriptions,
+    )
     app.state.fcdata_client = FcDataClient(settings)
+    from app.services.chart_realtime_service import ChartRealtimeService
+    from app.services.realtime_indicators import build_default_cache
+
+    chart_task = None
+    if settings.chart_realtime_enabled:
+        chart_task = asyncio.create_task(
+            ChartRealtimeService(
+                settings,
+                app.state.realtime,
+                app.state.fcdata_client,
+                build_default_cache(),
+            ).run(),
+            name="chart-realtime",
+        )
     app.state.rag_runtime = None
     if settings.rag_enabled:
         try:
@@ -61,6 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if chart_task:
+            chart_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await chart_task
+        await app.state.realtime.close()
         runtime = app.state.rag_runtime
         if runtime:
             if runtime.worker_task:
@@ -103,6 +129,7 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
+    app.include_router(realtime.router, prefix=settings.api_prefix)
     app.include_router(health.router)
     app.include_router(market.router, prefix=settings.api_prefix)
     app.include_router(indicators.router, prefix=settings.api_prefix)

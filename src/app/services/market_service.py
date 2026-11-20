@@ -19,6 +19,7 @@ from app.models.candle import Candle
 from app.models.symbol import Symbol
 from app.repositories.market_repository import MarketRepository
 from app.schemas.market import QuoteOut
+from app.services.weekly_candles import load_timeframe_candles
 
 logger = get_logger(__name__)
 
@@ -56,19 +57,21 @@ class MarketService:
         limit: int = 200,
         offset: int = 0,
         active_only: bool = True,
+        query: str | None = None,
     ) -> tuple[list[Symbol], int]:
-        """Đọc danh mục mã chứng khoán có phân trang.
+        """Đọc danh mục mã chứng khoán có phân trang và tìm kiếm.
 
         Args:
             limit: Số bản ghi tối đa.
             offset: Vị trí bắt đầu.
             active_only: Chỉ lấy mã còn giao dịch.
+            query: Chuỗi tìm kiếm theo mã hoặc tên công ty.
 
         Returns:
             Tuple (danh sách mã, tổng số mã).
         """
         return await self._repository.list_symbols(
-            active_only=active_only, limit=limit, offset=offset
+            active_only=active_only, limit=limit, offset=offset, query=query
         )
 
     async def get_candles(
@@ -79,6 +82,9 @@ class MarketService:
         limit: int = 250,
     ) -> list[Candle]:
         """Đọc nến đã đóng của một mã.
+
+        Khung `1W` được dựng từ nến ngày đã đóng khi chưa lưu sẵn; tuần đang
+        hình thành bị loại để tránh dữ liệu chưa xác nhận.
 
         Args:
             symbol: Mã chứng khoán.
@@ -94,7 +100,13 @@ class MarketService:
         symbol_row = await self._repository.get_symbol(symbol)
         if symbol_row is None:
             raise NotFoundError(f"Chưa có mã {symbol.upper()} trong danh mục.")
-        candles = await self._repository.get_candles(symbol, timeframe, limit=limit)
+        candles = await load_timeframe_candles(
+            self._repository,
+            symbol,
+            timeframe,
+            limit=limit,
+            tz=self._settings.market_tz,
+        )
         if not candles:
             raise NotFoundError(f"Mã {symbol.upper()} chưa có nến {timeframe}.")
         return candles

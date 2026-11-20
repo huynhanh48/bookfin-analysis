@@ -11,6 +11,8 @@ from app.indicators.swing_divergence import DivergenceConfig, detect_divergence
 
 # Preserve existing clients' four aggregate keys; Hidden is intentionally disabled.
 DIVERGENCE_KEYS = ("bearish_regular", "bullish_regular", "bearish_hidden", "bullish_hidden")
+# Tăng khi thuật toán phát hiện thay đổi; snapshot cũ sẽ tự tính lại.
+ALGORITHM_VERSION = "swing-div-4"
 
 
 def divergence_history(
@@ -52,13 +54,13 @@ def compute_divergence(
     events = divergence_history(high, low, close, cfg) if len(close) >= warmup else []
     active = [event for event in events if event["confirmed_index"] == len(close) - 1]
     for event in active:
-        values[f"{event['direction']}_regular"] = 1.0
+        values[f"{event['direction']}_{event['kind']}"] = 1.0
     return IndicatorOutput(
         indicator="divergence",
-        parameters={**asdict(cfg), "algorithm_version": "swing-div-3"},
+        parameters={**asdict(cfg), "algorithm_version": ALGORITHM_VERSION},
         values=values,
         warmup=warmup,
-        signal=f"{active[0]['direction']}_regular" if active else None,
+        signal=f"{active[0]['direction']}_{active[0]['kind']}" if active else None,
         events=events,
     )
 

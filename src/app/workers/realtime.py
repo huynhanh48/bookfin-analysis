@@ -1,148 +1,40 @@
-"""Worker realtime: nhận tick và quản lý nến đang hình thành.
+"""Worker realtime legacy: nhận tick và ghi nến đã đóng (tương thích ngược).
 
-Quy tắc bắt buộc: worker **không** ghi đè nến đã đóng. Tick được gom thành nến
-đang hình thành, giữ ở Redis hoặc trong bộ nhớ; chỉ khi nến thực sự đóng (sang
-khung thời gian mới) mới upsert vào PostgreSQL.
+CẢNH BÁO: worker này gom tick theo phút nhưng ghi vào khung `1D`; nó được giữ
+để không phá các script cũ. Với chart realtime và vận hành chuẩn, dùng role mới::
 
-Chạy độc lập với API::
+    python -m app.workers realtime --symbols FPT,HPG
 
-    uv run python -m app.workers.realtime --symbols FPT,HPG --indices VNINDEX
+Role mới không ghi nến minute vào PostgreSQL; nó chỉ cache nến đang hình thành
+và kích hoạt `ingest-close` + `recompute-indicators` sau khi phiên đóng.
 """
 
 import argparse
 import asyncio
 import json
-from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from app.core.config import Settings, get_settings
-from app.core.database import dispose_engine, session_scope
-from app.core.logging import configure_logging, get_logger
-from app.core.redis import close_redis_client, get_redis_client
+from app.core.database import session_scope
+from app.core.logging import get_logger
+from app.core.redis import get_redis_client
 from app.fcdata.mapper import CandleRecord
 from app.fcdata.stream import FcDataStream, QuoteTick
 from app.indicators.market_structure import CandleBar
-from app.indicators.native import configure_unstable_periods
 from app.repositories.indicator_repository import IndicatorRepository
 from app.repositories.market_repository import MarketRepository
 from app.services.indicator_service import IndicatorService
+from app.workers.bootstrap import close_worker_resources, prepare
+from app.workers.roles.realtime import FormingCandle, FormingCandleAggregator
 
 logger = get_logger(__name__)
 
 _FORMING_KEY_PREFIX = "forming"
 
-
-@dataclass(slots=True)
-class FormingCandle:
-    """Nến đang hình thành từ các tick realtime.
-
-    Attributes:
-        symbol: Mã chứng khoán.
-        start: Thời điểm mở khung thời gian.
-        open: Giá tick đầu tiên.
-        high: Giá cao nhất đã thấy.
-        low: Giá thấp nhất đã thấy.
-        close: Giá tick gần nhất.
-        volume: Khối lượng cộng dồn.
-    """
-
-    symbol: str
-    start: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float = 0.0
-
-
-class FormingCandleAggregator:
-    """Gom tick thành nến đang hình thành và nhả ra nến đã đóng."""
-
-    def __init__(self, *, timeframe_minutes: int = 1, market_tz: ZoneInfo) -> None:
-        """Khởi tạo aggregator.
-
-        Args:
-            timeframe_minutes: Độ dài một khung thời gian, tính bằng phút.
-            market_tz: Múi giờ thị trường để cắt khung.
-        """
-        self._minutes = max(1, timeframe_minutes)
-        self._tz = market_tz
-        self._forming: dict[str, FormingCandle] = {}
-
-    def bucket_start(self, moment: datetime) -> datetime:
-        """Thời điểm mở khung thời gian chứa `moment`.
-
-        Args:
-            moment: Thời điểm cần cắt khung.
-
-        Returns:
-            Đầu khung thời gian theo múi giờ thị trường.
-        """
-        local = moment.astimezone(self._tz)
-        floored_minute = local.minute - (local.minute % self._minutes)
-        return local.replace(minute=floored_minute, second=0, microsecond=0)
-
-    def on_tick(self, tick: QuoteTick, *, now: datetime | None = None) -> list[CandleBar]:
-        """Nạp một tick và trả về các nến vừa đóng.
-
-        Args:
-            tick: Tick đã chuẩn hoá.
-            now: Thời điểm hiện tại, dùng để test.
-
-        Returns:
-            Danh sách nến đã đóng; rỗng khi tick vẫn thuộc nến đang hình thành.
-        """
-        if tick.price is None:
-            return []
-
-        moment = now or datetime.now(tz=self._tz)
-        bucket = self.bucket_start(moment)
-        closed: list[CandleBar] = []
-
-        current = self._forming.get(tick.symbol)
-        if current is not None and current.start != bucket:
-            closed.append(self._to_bar(current))
-            self._forming.pop(tick.symbol, None)
-            current = None
-
-        if current is None:
-            self._forming[tick.symbol] = FormingCandle(
-                symbol=tick.symbol,
-                start=bucket,
-                open=tick.price,
-                high=tick.price,
-                low=tick.price,
-                close=tick.price,
-                volume=float(tick.volume or 0),
-            )
-        else:
-            current.high = max(current.high, tick.price)
-            current.low = min(current.low, tick.price)
-            current.close = tick.price
-            current.volume += float(tick.volume or 0)
-
-        return closed
-
-    def forming_snapshot(self) -> list[FormingCandle]:
-        """Ảnh chụp các nến đang hình thành."""
-        return list(self._forming.values())
-
-    @staticmethod
-    def _to_bar(candle: FormingCandle) -> CandleBar:
-        """Chuyển nến đang hình thành thành nến đã đóng."""
-        return CandleBar(
-            time=candle.start,
-            open=candle.open,
-            high=candle.high,
-            low=candle.low,
-            close=candle.close,
-            volume=candle.volume,
-        )
+__all__ = ["FormingCandle", "FormingCandleAggregator", "RealtimeWorker", "main"]
 
 
 class RealtimeWorker:
-    """Ghép stream tick với aggregator, Redis cache và PostgreSQL."""
+    """Ghép stream tick với aggregator, Redis cache và PostgreSQL (legacy)."""
 
     def __init__(
         self,
@@ -281,8 +173,7 @@ async def main() -> None:
     """Entrypoint của worker."""
     args = _parse_args()
     settings = get_settings()
-    configure_logging(settings.log_level)
-    configure_unstable_periods(settings.indicator_unstable_periods)
+    prepare(settings)
 
     symbols = [item.strip().upper() for item in args.symbols.split(",") if item.strip()]
     indices = [item.strip().upper() for item in args.indices.split(",") if item.strip()]
@@ -297,8 +188,7 @@ async def main() -> None:
     try:
         await worker.run()
     finally:
-        await close_redis_client()
-        await dispose_engine()
+        await close_worker_resources()
 
 
 if __name__ == "__main__":

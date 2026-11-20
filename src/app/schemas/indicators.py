@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.schemas.divergence import DivergenceEventOut
+from app.schemas.divergence import DivergenceEventOut, StructuralDivergenceOut
 from app.schemas.market import CandleOut
 
 IndicatorStatus = Literal["ok", "insufficient_history"]
@@ -91,6 +91,8 @@ class IndicatorSeriesOut(BaseModel):
     parameters: dict[str, int | float | str] = Field(default_factory=dict)
     points: list[IndicatorPointOut] = Field(default_factory=list)
     events: list[DivergenceEventOut] = Field(default_factory=list)
+    local_divergences: list[DivergenceEventOut] = Field(default_factory=list)
+    structural_divergences: list[StructuralDivergenceOut] = Field(default_factory=list)
 
 
 class IndicatorSeriesResponse(BaseModel):
@@ -103,6 +105,10 @@ class IndicatorSeriesResponse(BaseModel):
         count: Số nến trả về.
         candles: Nến đã đóng, tăng dần theo thời gian.
         series: Chuỗi chỉ báo được tính trên cùng chuỗi nến.
+        local_divergences: Phân kỳ local (giữ nguyên để tương thích `events`).
+        structural_divergences: Phân kỳ cấu trúc gộp từ các local liên tiếp.
+        provisional: True khi nến cuối là bar đang chạy.
+        last_confirmed_at: Thời điểm nến đã đóng gần nhất.
     """
 
     symbol: str
@@ -111,3 +117,8 @@ class IndicatorSeriesResponse(BaseModel):
     count: int = 0
     candles: list[CandleOut] = Field(default_factory=list)
     series: list[IndicatorSeriesOut] = Field(default_factory=list)
+    local_divergences: list[DivergenceEventOut] = Field(default_factory=list)
+    structural_divergences: list[StructuralDivergenceOut] = Field(default_factory=list)
+    # Bar cuối có phải nến đang chạy (chưa đóng) hay không.
+    provisional: bool = False
+    last_confirmed_at: datetime | None = None

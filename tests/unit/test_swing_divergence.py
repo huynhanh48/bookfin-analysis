@@ -76,10 +76,14 @@ def test_independent_sources_require_same_price_pair_to_combine():
     for bar, p, m, r in [(3, 10, 7, 9), (11, 9, 8, 5), (19, 12, 6, 6)]:
         price[bar], macd[bar], rsi[bar] = p, m, r
     events = detect_divergence(price, np.full(26, np.nan), macd, rsi, config())
-    assert [(e["start_index"], e["oscillators"][0]["indicator"]) for e in events] == [
+    regular = [event for event in events if event["kind"] == "regular"]
+    assert [(e["start_index"], e["oscillators"][0]["indicator"]) for e in regular] == [
         (11, "MACD"),
     ]
-    assert all(len(event_alerts(event)) == 1 for event in events)
+    assert all(len(event_alerts(event)) == 1 for event in regular)
+    # Cặp 3 -> 11 là giá tạo đỉnh thấp hơn nhưng MACD tạo đỉnh cao hơn: hidden.
+    hidden = [event for event in events if event["kind"] == "hidden"]
+    assert [(e["start_index"], e["direction"]) for e in hidden] == [(3, "bearish")]
 
 
 def test_nearest_matching_never_reuses_or_crosses_and_accepts_tolerance_edge():
@@ -282,7 +286,9 @@ def test_dpg_reported_false_positive_regression():
     candles = fixture["candles"]
     assert len(candles) == 250
     arrays = [np.array([c[key] for c in candles], dtype=float) for key in ("high", "low", "close")]
-    assert divergence_history(*arrays, DivergenceConfig()) == []
+    events = divergence_history(*arrays, DivergenceConfig())
+    # Hồi quy: dữ liệu DPG không còn sinh phân kỳ thường sai (false positive).
+    assert [event for event in events if event["kind"] == "regular"] == []
 
 
 def test_decorator_and_functional_wrapper_use_real_detector():
@@ -331,3 +337,63 @@ def test_rsi_context_records_window_extremes_without_requiring_breakout_extreme(
         "overbought_seen": True,
     }
     assert oscillator_context("MACD", values, 0, 4) is None
+
+
+def test_hidden_bearish_divergence_is_detected():
+    """Giá tạo đỉnh thấp hơn nhưng MACD tạo đỉnh cao hơn = phân kỳ ẩn (hidden)."""
+    from app.indicators.swing_divergence import (
+        DivergenceConfig,
+        IndicatorLine,
+        SwingDivergenceDetector,
+    )
+
+    size = 40
+    high = np.full(size, 90.0)
+    low = np.full(size, 80.0)
+    high[10], high[25] = 100.0, 95.0
+    macd = np.full(size, 0.5)
+    macd[10], macd[25] = 1.0, 2.0
+    rsi = np.full(size, 50.0)
+    rsi[10], rsi[25] = 60.0, 65.0
+
+    events = SwingDivergenceDetector().detect(
+        high,
+        low,
+        [IndicatorLine("MACD", macd), IndicatorLine("RSI", rsi)],
+        DivergenceConfig(),
+        closed_count=size,
+    )
+
+    hidden = [event for event in events if event["kind"] == "hidden"]
+    assert hidden, events
+    assert hidden[0]["direction"] == "bearish"
+    assert hidden[0]["start_index"] == 10
+    assert hidden[0]["end_index"] == 25
+    assert {o["indicator"] for o in hidden[0]["oscillators"]} == {"MACD", "RSI"}
+
+
+def test_regular_divergence_still_emitted_next_to_hidden():
+    """Đỉnh cao hơn nhưng oscillator thấp hơn vẫn là phân kỳ thường."""
+    from app.indicators.swing_divergence import (
+        DivergenceConfig,
+        IndicatorLine,
+        SwingDivergenceDetector,
+    )
+
+    size = 40
+    high = np.full(size, 90.0)
+    low = np.full(size, 80.0)
+    high[10], high[25] = 100.0, 105.0
+    macd = np.full(size, 0.5)
+    macd[10], macd[25] = 2.0, 1.0
+
+    events = SwingDivergenceDetector().detect(
+        high,
+        low,
+        [IndicatorLine("MACD", macd)],
+        DivergenceConfig(),
+        closed_count=size,
+    )
+
+    regular = [event for event in events if event["kind"] == "regular"]
+    assert regular and regular[0]["direction"] == "bearish"

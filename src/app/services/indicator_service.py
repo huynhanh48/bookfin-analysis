@@ -6,9 +6,10 @@ Worker gọi `recompute` để tính trước và lưu snapshot. API gọi `get_
 """
 
 import hashlib
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta
+from decimal import Decimal
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,7 @@ from app.core.exceptions import InsufficientDataError
 from app.core.logging import get_logger
 from app.indicators import ENGINE_VERSION, IndicatorOutput, Ohlcv
 from app.indicators.custom import MarketStructureIndicator
+from app.indicators.divergence import ALGORITHM_VERSION as DIVERGENCE_ALGORITHM_VERSION
 from app.indicators.engine import FORMULA_VERSION, IndicatorFrame
 from app.indicators.market_structure import (
     ENGINE_VERSION as STRUCTURE_ENGINE_VERSION,
@@ -42,16 +44,19 @@ from app.indicators.registry import (
     get_spec,
     parameters_hash,
 )
+from app.indicators.structural_divergence import group_structural_divergences
 from app.indicators.swing_divergence import event_alerts
 from app.models.candle import Candle
 from app.repositories.indicator_repository import IndicatorRepository
 from app.repositories.market_repository import MarketRepository
-from app.schemas.divergence import DivergenceEventOut
+from app.schemas.divergence import DivergenceEventOut, StructuralDivergenceOut
 from app.schemas.indicators import (
     IndicatorPointOut,
     IndicatorResult,
     IndicatorSeriesOut,
 )
+from app.services.provisional_bar import ProvisionalBarProvider
+from app.services.weekly_candles import WEEKLY_TIMEFRAME, load_timeframe_candles
 
 logger = get_logger(__name__)
 
@@ -69,6 +74,63 @@ CHART_INDICATOR_REQUESTS: tuple[tuple[str, dict[str, int | float]], ...] = (
     ("volume_sma", {"period": 20}),
     ("divergence", {}),
 )
+
+# Pivot của divergence được xác nhận sau `pivot_right` nến, nên khung tuần cần
+# ít nến hơn để giữ cùng ý nghĩa thời gian: 5 nến ngày ≈ 1 tuần, còn 3 nến tuần
+# ≈ 3 tuần. Không đổi tham số của 1D để kết quả khớp snapshot đã lưu.
+WEEKLY_DIVERGENCE_PARAMETERS: dict[str, int] = {
+    "pivot_length": 3,
+    "pivot_right": 3,
+    "tolerance_bars": 2,
+    "min_gap_bars": 4,
+}
+
+
+def timeframe_parameters(
+    timeframe: str,
+    name: str,
+    parameters: Mapping[str, int | float],
+) -> dict[str, int | float]:
+    """Áp tham số theo khung thời gian cho một chỉ báo.
+
+    Hiện chỉ divergence cần điều chỉnh: swing pivot trên nến tuần phải dùng ít
+    nến hơn nến ngày. Tham số client truyền vào luôn được ưu tiên.
+
+    Args:
+        timeframe: Khung thời gian, ví dụ `1D` hoặc `1W`.
+        name: Tên chỉ báo.
+        parameters: Tham số client truyền; rỗng nghĩa là dùng mặc định.
+
+    Returns:
+        Tham số sau khi áp quy tắc theo khung.
+    """
+    if timeframe != WEEKLY_TIMEFRAME or name != "divergence":
+        return dict(parameters)
+    return {**WEEKLY_DIVERGENCE_PARAMETERS, **parameters}
+
+
+def hash_parameters(
+    name: str, parameters: Mapping[str, int | float]
+) -> dict[str, int | float | str]:
+    """Tham số dùng để tính hash snapshot, khớp đúng payload đã lưu.
+
+    Divergence lưu kèm `algorithm_version`, nên khi thuật toán đổi thì hash đổi
+    theo và snapshot cũ không bị tái sử dụng.
+    """
+    merged: dict[str, int | float | str] = {**get_spec(name).default_parameters, **parameters}
+    if name == "divergence":
+        merged["algorithm_version"] = DIVERGENCE_ALGORITHM_VERSION
+    return merged
+
+
+def planned_requests(
+    timeframe: str,
+    requests: Sequence[tuple[str, dict[str, int | float]]],
+) -> tuple[tuple[str, dict[str, int | float]], ...]:
+    """Chuẩn hoá danh sách chỉ báo cần tính theo khung thời gian."""
+    return tuple(
+        (name, timeframe_parameters(timeframe, name, parameters)) for name, parameters in requests
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +155,39 @@ class IndicatorSet:
 
 
 @dataclass(frozen=True, slots=True)
+class DivergenceScanRow:
+    """Một phân kỳ đã xác nhận trong khoảng quét.
+
+    Attributes:
+        symbol: Mã chứng khoán.
+        timeframe: Khung thời gian.
+        kind: regular hoặc hidden.
+        direction: bullish hoặc bearish.
+        indicator: Chỉ báo tạo phân kỳ, ví dụ `MACD + RSI`.
+        start_time: Nến mở đầu vùng phân kỳ.
+        end_time: Nến kết thúc vùng phân kỳ.
+        start_price: Giá tại pivot đầu.
+        end_price: Giá tại pivot cuối.
+        confirmed_at: Nến đóng xác nhận tín hiệu.
+        label: Nhãn hiển thị.
+        alerts: Danh sách alert logic.
+    """
+
+    symbol: str
+    timeframe: str
+    kind: str
+    direction: str
+    indicator: str
+    start_time: datetime
+    end_time: datetime
+    start_price: float
+    end_price: float
+    confirmed_at: datetime
+    label: str
+    alerts: list[str]
+
+
+@dataclass(frozen=True, slots=True)
 class IndicatorSeriesSet:
     """Nến và chuỗi chỉ báo căn cùng trục thời gian.
 
@@ -109,6 +204,8 @@ class IndicatorSeriesSet:
     as_of: datetime | None
     candles: list[Candle]
     series: list[IndicatorSeriesOut] = field(default_factory=list)
+    provisional: bool = False
+    last_confirmed_at: datetime | None = None
 
 
 def _swing_to_dict(swing: SwingPoint) -> dict[str, Any]:
@@ -259,6 +356,7 @@ class IndicatorService:
         settings: Settings,
         market_repository: MarketRepository,
         indicator_repository: IndicatorRepository,
+        provisional: ProvisionalBarProvider | None = None,
     ) -> None:
         """Khởi tạo service.
 
@@ -266,10 +364,12 @@ class IndicatorService:
             settings: Cấu hình ứng dụng.
             market_repository: Repository đọc nến.
             indicator_repository: Repository chỉ báo và sự kiện cấu trúc.
+            provisional: Provider bar đang chạy; None nghĩa là không gắn bar live.
         """
         self._settings = settings
         self._market_repository = market_repository
         self._indicator_repository = indicator_repository
+        self._provisional = provisional
 
     async def get_indicators(self, symbol: str, timeframe: str = "1D") -> IndicatorSet:
         """Đọc bộ chỉ báo đã precompute, tính bù khi thiếu.
@@ -295,23 +395,23 @@ class IndicatorService:
             and row.payload.get("unstable_periods", {}) == unstable_metadata()
         ]
         expected = {
-            (name, parameters_hash({**get_spec(name).default_parameters, **params}))
-            for name, params in DEFAULT_INDICATOR_REQUESTS
+            (name, parameters_hash(hash_parameters(name, params)))
+            for name, params in planned_requests(timeframe, DEFAULT_INDICATOR_REQUESTS)
         }
         available = {
             (
                 row.indicator,
-                parameters_hash(
-                    {
-                        k: v
-                        for k, v in row.payload.get("parameters", {}).items()
-                        if k != "algorithm_version"
-                    }
-                ),
+                # Giữ `algorithm_version` trong hash: khi thuật toán đổi, snapshot
+                # cũ không còn khớp và sẽ được tính lại thay vì tái sử dụng.
+                parameters_hash(row.payload.get("parameters", {})),
             )
             for row in stored
         }
         if not expected <= available:
+            if timeframe == WEEKLY_TIMEFRAME:
+                # Nến tuần được dựng khi đọc, chưa có snapshot lưu sẵn nên tính
+                # trực tiếp và không ghi đè bảng indicator_snapshots.
+                return await self._compute_set_on_demand(ticker, timeframe)
             result = await self.recompute(ticker, timeframe)
             return IndicatorSet(
                 symbol=result.symbol,
@@ -348,6 +448,61 @@ class IndicatorService:
             results=results,
         )
 
+    async def _compute_set_on_demand(self, ticker: str, timeframe: str) -> IndicatorSet:
+        """Tính bộ chỉ báo mặc định ngay trong request, không ghi snapshot.
+
+        Dùng cho khung `1W` vì nến tuần được dựng từ nến ngày khi đọc, nên không
+        có bản ghi lưu sẵn để tái sử dụng.
+
+        Args:
+            ticker: Mã chứng khoán đã chuẩn hoá.
+            timeframe: Khung thời gian.
+
+        Returns:
+            `IndicatorSet` với `computed_on_demand=True`.
+
+        Raises:
+            InsufficientDataError: Khi không đủ nến đã đóng để tính.
+        """
+        candles = await self._load_candles(ticker, timeframe, limit=self._settings.compute_lookback)
+        candles = self._divergence_closed_candles(candles)
+        if len(candles) < MIN_CANDLES:
+            raise InsufficientDataError(
+                f"Mã {ticker} chỉ có {len(candles)} nến {timeframe}, cần tối thiểu {MIN_CANDLES}."
+            )
+
+        ohlcv = self._build_ohlcv(candles)
+        IndicatorFrame(ohlcv, [c.candle_open_time for c in candles], timeframe).validate()
+        benchmark = await self._benchmark_array(timeframe, candles)
+        as_of = candles[-1].candle_open_time
+        results = []
+        for name, params in planned_requests(timeframe, DEFAULT_INDICATOR_REQUESTS):
+            output = compute_indicator(name, ohlcv, params, benchmark=benchmark)
+            events = divergence_event_views(output, candles) if name == "divergence" else []
+            results.append(
+                IndicatorResult(
+                    symbol=ticker,
+                    timeframe=timeframe,
+                    as_of=as_of,
+                    indicator=output.indicator,
+                    parameters=output.parameters,
+                    values=output.values,
+                    signal=output.signal,
+                    warmup=output.warmup,
+                    status=output.status,
+                    engine_version=ENGINE_VERSION,
+                    events=events,
+                )
+            )
+        return IndicatorSet(
+            symbol=ticker,
+            timeframe=timeframe,
+            as_of=as_of,
+            candles_used=len(candles),
+            computed_on_demand=True,
+            results=results,
+        )
+
     async def get_series(
         self,
         symbol: str,
@@ -355,6 +510,8 @@ class IndicatorService:
         *,
         requests: Sequence[tuple[str, dict[str, int | float]]] | None = None,
         limit: int = 250,
+        end: datetime | None = None,
+        include_provisional: bool = False,
     ) -> IndicatorSeriesSet:
         """Tính chuỗi thời gian của các chỉ báo trên nến đã đóng.
 
@@ -368,6 +525,9 @@ class IndicatorService:
             requests: Danh sách (tên chỉ báo, tham số); mặc định dùng bộ chỉ báo
                 biểu đồ.
             limit: Số nến tối đa.
+            end: Chỉ dùng nến mở trước mốc này, dùng để nạp lùi lịch sử.
+            include_provisional: Ghép thêm nến đang chạy của phiên hiện tại
+                (chỉ với 1D, không áp dụng khi phân trang lịch sử).
 
         Returns:
             `IndicatorSeriesSet` gồm nến và chuỗi chỉ báo.
@@ -376,9 +536,9 @@ class IndicatorService:
             InsufficientDataError: Khi mã chưa có nến đã đóng.
         """
         ticker = symbol.upper()
-        planned = tuple(requests or CHART_INDICATOR_REQUESTS)
-        candles = await self._market_repository.get_candles(ticker, timeframe, limit=limit)
-        candles = self._divergence_closed_candles(candles)
+        planned = planned_requests(timeframe, requests or CHART_INDICATOR_REQUESTS)
+        candles = await self._load_candles(ticker, timeframe, limit=limit, end=end)
+        candles = self._divergence_closed_candles(candles, as_of=end)
         if not candles:
             raise InsufficientDataError(f"Mã {ticker} chưa có nến {timeframe} đã đóng.")
 
@@ -390,13 +550,159 @@ class IndicatorService:
             self._build_series(name, parameters, ohlcv, candles, benchmark)
             for name, parameters in planned
         ]
-        return IndicatorSeriesSet(
+        result = IndicatorSeriesSet(
             symbol=ticker,
             timeframe=timeframe,
             as_of=candles[-1].candle_open_time,
             candles=candles,
             series=series,
+            last_confirmed_at=candles[-1].candle_open_time,
         )
+        if include_provisional and end is None and timeframe == "1D":
+            result = await self._append_provisional(result, planned)
+        return result
+
+    async def scan_divergences(
+        self,
+        *,
+        symbols: Sequence[str] | None = None,
+        timeframe: str = "1D",
+        days: int = 1,
+        limit: int = 600,
+    ) -> list[DivergenceScanRow]:
+        """Quét phân kỳ đã xác nhận trên toàn bộ danh mục.
+
+        Chỉ dùng nến đã đóng (cùng quy tắc với API chart), nên tín hiệu không bao
+        giờ sinh ra từ nến đang chạy.
+
+        Args:
+            symbols: Danh sách mã cụ thể; bỏ trống để quét mã đang hoạt động.
+            timeframe: Khung thời gian.
+            days: Chỉ lấy tín hiệu xác nhận trong `days` phiên gần nhất.
+            limit: Số mã tối đa khi quét toàn bộ.
+
+        Returns:
+            Danh sách kết quả, mới nhất trước.
+        """
+        if symbols:
+            tickers = [item.upper() for item in symbols]
+        else:
+            rows, _total = await self._market_repository.list_symbols(limit=limit, active_only=True)
+            tickers = [row.symbol for row in rows]
+
+        results: list[DivergenceScanRow] = []
+        for index, ticker in enumerate(tickers, start=1):
+            try:
+                result = await self.get_series(
+                    ticker,
+                    timeframe,
+                    requests=[("divergence", {})],
+                    limit=self._settings.compute_lookback,
+                )
+            except InsufficientDataError:
+                continue
+            except Exception as exc:  # noqa: BLE001 - một mã lỗi không được dừng cả lượt quét
+                logger.warning(
+                    "divergence_scan_symbol_failed",
+                    extra={"symbol": ticker, "error_type": type(exc).__name__},
+                )
+                continue
+
+            if not result.candles:
+                continue
+            series = next((item for item in result.series if item.indicator == "divergence"), None)
+            if series is None or not series.events:
+                continue
+
+            window = max(1, min(days, len(result.candles)))
+            threshold = result.candles[-window].candle_open_time
+            for event in series.events:
+                if event.confirmed_at < threshold:
+                    continue
+                names = " + ".join(item.indicator for item in event.oscillators)
+                results.append(
+                    DivergenceScanRow(
+                        symbol=ticker,
+                        timeframe=timeframe,
+                        kind=event.kind,
+                        direction=event.direction,
+                        indicator=names,
+                        start_time=event.start_time,
+                        end_time=event.end_time,
+                        start_price=event.start_price,
+                        end_price=event.end_price,
+                        confirmed_at=event.confirmed_at,
+                        label=event.label,
+                        alerts=event.alerts,
+                    )
+                )
+            if index % 100 == 0:
+                logger.info(
+                    "divergence_scan_progress",
+                    extra={"scanned": index, "total": len(tickers), "hits": len(results)},
+                )
+
+        results.sort(key=lambda item: (item.confirmed_at, item.symbol), reverse=True)
+        return results
+
+    async def _append_provisional(
+        self,
+        result: IndicatorSeriesSet,
+        planned: Sequence[tuple[str, dict[str, int | float]]],
+    ) -> IndicatorSeriesSet:
+        """Ghép nến đang chạy và giá trị chỉ báo tương ứng vào kết quả.
+
+        Bar provisional chỉ để hiển thị: không persist, không dùng cho divergence
+        hay cấu trúc thị trường.
+
+        Args:
+            result: Kết quả chuỗi chỉ báo đã tính trên nến đóng.
+            planned: Danh sách (tên chỉ báo, tham số) đã yêu cầu.
+        """
+        if self._provisional is None or not result.candles:
+            return result
+        bar = await self._provisional.fetch(result.symbol)
+        if bar is None:
+            return result
+        last_closed_day = (
+            result.candles[-1].candle_open_time.astimezone(self._settings.market_tz).date()
+        )
+        if bar.trading_day <= last_closed_day:
+            # DB đã có nến hôm nay: đây là nến đã đóng, không cần bar tạm.
+            return result
+
+        live = Candle(
+            id=None,
+            symbol=result.symbol,
+            timeframe="1D",
+            candle_open_time=bar.open_time,
+            open=Decimal(str(bar.bar.open)),
+            high=Decimal(str(bar.bar.high)),
+            low=Decimal(str(bar.bar.low)),
+            close=Decimal(str(bar.bar.close)),
+            volume=int(bar.bar.volume),
+            turnover=None,
+            price_basis="RAW",
+            source="fcdata:provisional",
+        )
+        candles = [*result.candles, live]
+        ohlcv = self._build_ohlcv(candles)
+        for series, (name, parameters) in zip(result.series, planned, strict=False):
+            if name == "divergence":
+                # Divergence chỉ xác nhận trên nến đã đóng.
+                continue
+            try:
+                output = compute_indicator(name, ohlcv, parameters)
+            except (ValueError, KeyError):
+                continue
+            series.points.append(
+                IndicatorPointOut(
+                    time=bar.open_time,
+                    values=output.values,
+                    signal=output.signal,
+                )
+            )
+        return replace(result, candles=candles, as_of=bar.open_time, provisional=True)
 
     def _divergence_closed_candles(
         self, candles: list[Candle], *, as_of: datetime | None = None
@@ -448,12 +754,12 @@ class IndicatorService:
                     ("bullish_regular", "bearish_regular", "bullish_hidden", "bearish_hidden"), 0.0
                 )
                 for event in active:
-                    values[f"{event.direction}_regular"] = 1.0
+                    values[f"{event.direction}_{event.kind}"] = 1.0
                 points.append(
                     IndicatorPointOut(
                         time=candle.candle_open_time,
                         values=values,
-                        signal=f"{active[0].direction}_regular" if active else None,
+                        signal=f"{active[0].direction}_{active[0].kind}" if active else None,
                     )
                 )
             return IndicatorSeriesOut(
@@ -462,6 +768,8 @@ class IndicatorService:
                 parameters=output.parameters,
                 points=points,
                 events=events,
+                local_divergences=events,
+                structural_divergences=structural_event_views(output, closed, events),
             )
         from app.indicators import last_value
         from app.indicators.factory import NATIVE_SPECS, build_indicator, interpret_signal
@@ -566,13 +874,9 @@ class IndicatorService:
         reusable = {
             (
                 row.indicator,
-                parameters_hash(
-                    {
-                        k: v
-                        for k, v in row.payload.get("parameters", {}).items()
-                        if k != "algorithm_version"
-                    }
-                ),
+                # Giữ `algorithm_version` trong hash: khi thuật toán đổi, snapshot
+                # cũ không còn khớp và sẽ được tính lại thay vì tái sử dụng.
+                parameters_hash(row.payload.get("parameters", {})),
             ): row
             for row in stored
             if row.payload.get("input_hash") == input_hash
@@ -580,9 +884,8 @@ class IndicatorService:
         }
         outputs = []
         candle_time = candles[-1].candle_open_time
-        for name, params in DEFAULT_INDICATOR_REQUESTS:
-            merged: dict[str, Any] = {**get_spec(name).default_parameters, **params}
-            cached = reusable.get((name, parameters_hash(merged)))
+        for name, params in planned_requests(timeframe, DEFAULT_INDICATOR_REQUESTS):
+            cached = reusable.get((name, parameters_hash(hash_parameters(name, params))))
             if cached is not None:
                 payload = cached.payload
                 output = IndicatorOutput(
@@ -656,14 +959,17 @@ class IndicatorService:
             InsufficientDataError: Khi chưa nạp đủ nến.
         """
         ticker = symbol.upper()
-        candles = await self._market_repository.get_candles(
-            ticker, timeframe, limit=self._settings.compute_lookback
-        )
+        candles = await self._load_candles(ticker, timeframe, limit=self._settings.compute_lookback)
         candles = self._divergence_closed_candles(candles)
         if not candles:
             raise InsufficientDataError(f"Mã {ticker} chưa có nến {timeframe} đã đóng.")
 
         latest_time = candles[-1].candle_open_time
+        if timeframe == WEEKLY_TIMEFRAME:
+            # Nến tuần dựng từ 1D khi đọc nên cấu trúc tuần luôn tính lại, không
+            # đọc/ghi snapshot để tránh tái sử dụng kết quả của dữ liệu cũ.
+            return self._compute_structure(ticker, timeframe, candles)
+
         stored = await self._indicator_repository.get_latest_snapshot(
             ticker,
             timeframe,
@@ -683,6 +989,24 @@ class IndicatorService:
         await self._persist_structure(ticker, timeframe, latest_time, snapshot)
         return snapshot
 
+    async def _load_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        *,
+        limit: int,
+        end: datetime | None = None,
+    ) -> list[Candle]:
+        """Đọc nến cho engine, dựng 1W từ 1D khi khung tuần chưa được lưu."""
+        return await load_timeframe_candles(
+            self._market_repository,
+            symbol,
+            timeframe,
+            limit=limit,
+            tz=self._settings.market_tz,
+            end=end,
+        )
+
     def _build_ohlcv(self, candles: list[Candle]) -> Ohlcv:
         """Chuyển nến ORM thành mảng numpy cho engine chỉ báo."""
         return Ohlcv(
@@ -695,7 +1019,7 @@ class IndicatorService:
 
     async def _benchmark_array(self, timeframe: str, candles: list[Candle]) -> np.ndarray | None:
         """Căn chuỗi giá chỉ số tham chiếu theo đúng phiên của cổ phiếu."""
-        benchmark_rows = await self._market_repository.get_candles(
+        benchmark_rows = await self._load_candles(
             self._settings.benchmark_symbol,
             timeframe,
             limit=self._settings.compute_lookback,
@@ -878,7 +1202,10 @@ def divergence_event_views(
         end = candles[raw["end_index"]].candle_open_time
         confirmed = candles[raw["confirmed_index"]].candle_open_time
         names = " + ".join(o["indicator"] for o in oscillators)
-        identity = f"{start.isoformat()}:{end.isoformat()}:{raw['direction']}:{names}:{parameters_hash(output.parameters)}"
+        identity = (
+            f"{start.isoformat()}:{end.isoformat()}:{raw['direction']}:{raw['kind']}:"
+            f"{names}:{parameters_hash(output.parameters)}"
+        )
         event.pop("price_confirmed_index")
         event.pop("confirmed_index")
         results.append(
@@ -894,6 +1221,69 @@ def divergence_event_views(
                     "alerts": event_alerts(raw),
                     "label": names + (" Bear" if raw["direction"] == "bearish" else " Bull"),
                 }
+            )
+        )
+    return results
+
+
+def structural_event_views(
+    output: IndicatorOutput,
+    candles: list[Candle],
+    locals_: list[DivergenceEventOut],
+) -> list[StructuralDivergenceOut]:
+    """Gộp các local divergence liên tiếp thành phân kỳ cấu trúc.
+
+    Chỉ các local có cùng chiều, cùng loại và cùng chỉ báo, đồng thời bao trọn một
+    cấu trúc giá mới được gộp. Dữ liệu local gốc không bị thay đổi; mỗi cấu trúc
+    giữ danh sách `member_ids` để client ẩn đúng các local thành phần.
+
+    Args:
+        output: Kết quả chỉ báo divergence trên cùng chuỗi nến.
+        candles: Nến đã đóng dùng để phát hiện local (đúng thứ tự index).
+        locals_: DTO local divergence tương ứng 1-1 với `output.events`.
+
+    Returns:
+        Danh sách phân kỳ cấu trúc, tăng dần theo thời điểm xác nhận.
+    """
+    if output.indicator != "divergence" or len(locals_) < 2 or not candles:
+        return []
+
+    high = np.asarray([float(candle.high) for candle in candles], dtype=np.float64)
+    low = np.asarray([float(candle.low) for candle in candles], dtype=np.float64)
+    groups = group_structural_divergences([dict(event) for event in output.events], high, low)
+
+    results: list[StructuralDivergenceOut] = []
+    for group in groups:
+        members = [locals_[position] for position in group["member_positions"]]
+        if len(members) != group["pivot_count"] - 1:
+            continue
+        start = candles[group["start_index"]].candle_open_time
+        end = candles[group["end_index"]].candle_open_time
+        confirmed = candles[group["confirmed_index"]].candle_open_time
+        member_ids = [member.id for member in members]
+        identity = (
+            f"{start.isoformat()}:{end.isoformat()}:{group['direction']}:{group['kind']}:"
+            f"{group['indicator']}:{':'.join(member_ids)}"
+        )
+        suffix = "Bear" if group["direction"] == "bearish" else "Bull"
+        results.append(
+            StructuralDivergenceOut(
+                id=hashlib.sha256(identity.encode()).hexdigest()[:24],
+                kind=group["kind"],
+                direction=group["direction"],
+                indicator=group["indicator"],
+                start_index=group["start_index"],
+                end_index=group["end_index"],
+                start_time=start,
+                end_time=end,
+                start_price=group["start_price"],
+                end_price=group["end_price"],
+                start_value=group["start_value"],
+                end_value=group["end_value"],
+                pivot_count=group["pivot_count"],
+                confirmed_at=confirmed,
+                member_ids=member_ids,
+                label=f"STR {group['indicator']} {suffix}",
             )
         )
     return results

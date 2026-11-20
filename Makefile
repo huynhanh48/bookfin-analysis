@@ -1,7 +1,7 @@
 .PHONY: install dev lint format format-check test test-unit test-integration \
 	db-up cache-up up up-cache build down ps logs shell docker-migrate \
-	docker-test docker-lint worker-backfill worker-indicators worker-realtime \
-	migrate revision backfill indicators realtime pgvector redis-ping
+	docker-test docker-lint worker run-job worker-backfill worker-indicators \
+	worker-realtime worker-job migrate revision backfill indicators realtime pgvector redis-ping
 
 # ── Chạy trực tiếp trên máy bằng uv ─────────────────────────────────────────
 
@@ -42,7 +42,16 @@ indicators:
 	uv run python -m app.workers.indicator_worker $(args)
 
 realtime:
-	uv run python -m app.workers.realtime $(args)
+	uv run python -m app.workers realtime $(args)
+
+worker:
+	uv run python -m app.workers $(args)
+
+run-job:
+	uv run python -m app.workers run $(args)
+
+jobs:
+	uv run python -m app.workers list
 
 # ── Docker Compose ──────────────────────────────────────────────────────────
 # api và worker mount ./src nên sửa code là container cập nhật ngay.
@@ -84,7 +93,10 @@ worker-indicators:
 	docker compose run --rm worker python -m app.workers.indicator_worker $(args)
 
 worker-realtime:
-	docker compose run --rm worker python -m app.workers.realtime $(args)
+	docker compose run --rm worker python -m app.workers realtime $(args)
+
+worker-job:
+	docker compose run --rm worker python -m app.workers run $(args)
 
 db-up:
 	docker compose up -d postgres

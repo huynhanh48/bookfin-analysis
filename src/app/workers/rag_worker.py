@@ -119,20 +119,47 @@ async def _process_claimed(runtime, session, jobs, job) -> bool:
     return True
 
 
+async def validate_runtime(runtime: RagRuntime) -> None:
+    """Validate embedding models once before consuming or draining a batch.
+
+    Dùng chung bởi consumer dài hạn trong API và job `rag-ingestion` của worker
+    engine, để hai entrypoint có cùng kiểm tra model/dimension.
+    """
+    await runtime.text_embedding.validate_model()
+    if runtime.settings.rag_enrichment_enabled:
+        await runtime.case_text_embedding.validate_model()
+        await runtime.case_multimodal_embedding.validate_model()
+    else:
+        await runtime.case_embedding.validate_model()
+
+
+async def process_pending(runtime: RagRuntime, *, max_jobs: int | None = None) -> int:
+    """Claim và xử lý job RAG đang chờ.
+
+    Args:
+        runtime: RAG runtime đã validate model.
+        max_jobs: Số job tối đa; None nghĩa là drain tới khi hàng đợi rỗng.
+
+    Returns:
+        Số job đã claim và xử lý.
+    """
+    processed = 0
+    while max_jobs is None or processed < max_jobs:
+        if not await process_one(runtime):
+            break
+        processed += 1
+    return processed
+
+
 async def consume(runtime: RagRuntime, once: bool = False) -> None:
     """Consume durable jobs in the app process or in a standalone maintenance worker."""
     try:
-        await runtime.text_embedding.validate_model()
-        if runtime.settings.rag_enrichment_enabled:
-            await runtime.case_text_embedding.validate_model()
-            await runtime.case_multimodal_embedding.validate_model()
-        else:
-            await runtime.case_embedding.validate_model()
+        await validate_runtime(runtime)
+        if once:
+            await process_one(runtime)
+            return
         while True:
-            worked = await process_one(runtime)
-            if once:
-                break
-            if not worked:
+            if not await process_one(runtime):
                 await asyncio.sleep(2)
     except Exception as exc:
         runtime.worker_error = type(exc).__name__

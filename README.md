@@ -48,7 +48,9 @@ chmod 600 .env
 # Bắt buộc: POSTGRES_PASSWORD, REDIS_PASSWORD, ADMIN_API_KEY,
 # OPENROUTER_API_KEY (nếu dùng RAG/agent/news).
 
-docker compose -f docker-compose.prod.yml build
+# Build tuần tự để giảm dung lượng tạm trên VPS
+docker compose -f docker-compose.prod.yml build frontend
+docker compose -f docker-compose.prod.yml build api
 docker compose -f docker-compose.prod.yml up -d
 
 # http://<VPS_IP>:8080
@@ -61,9 +63,11 @@ docker compose -f docker-compose.prod.yml up -d
 - Update:
   ```bash
   git pull origin v1.1.0
-  docker compose -f docker-compose.prod.yml build
+  docker compose -f docker-compose.prod.yml build frontend
+  docker compose -f docker-compose.prod.yml build api
   docker compose -f docker-compose.prod.yml up -d
   ```
+- Hết đĩa khi build (`No space left on device`): chạy `docker builder prune -af` rồi build lại; cần tối thiểu ~20 GB trống.
 - Không commit `.env`.
 
 

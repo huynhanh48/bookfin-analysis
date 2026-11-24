@@ -38,6 +38,9 @@ x-app-build: &app-build
 
 x-app-image: &app-image
   image: bookfin-analysis-api:${IMAGE_TAG:-v1.1.0}
+  # Chỉ service `api` sở hữu build. Các service còn lại dùng lại image đã build
+  # để tránh Compose build trùng nhiều lần và làm đầy đĩa.
+  pull_policy: never
 
 x-app-volumes: &app-volumes
   - rag_data:/app/data
@@ -81,7 +84,6 @@ services:
 
   migrate:
     <<: *app-image
-    build: *app-build
     restart: "no"
     command: ["alembic", "upgrade", "head"]
     env_file:
@@ -117,7 +119,6 @@ services:
 
   scheduler:
     <<: *app-image
-    build: *app-build
     restart: unless-stopped
     command: ["python", "-m", "app.workers", "scheduler"]
     env_file:
@@ -137,7 +138,6 @@ services:
 
   realtime:
     <<: *app-image
-    build: *app-build
     restart: unless-stopped
     command:
       - sh
@@ -182,7 +182,6 @@ services:
 
   worker:
     <<: *app-image
-    build: *app-build
     profiles: ["worker"]
     command: ["python", "-m", "app.workers", "run", "divergence-scan", "--param", "limit=20"]
     env_file:

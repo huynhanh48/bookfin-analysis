@@ -32,9 +32,11 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 # Chạy bằng user không phải root.
+# Chỉ cấp quyền ghi cho thư mục dữ liệu; source và .venv chỉ cần đọc.
+# Tránh `chown -R /app` vì overlayfs phải copy-up toàn bộ .venv, rất tốn đĩa.
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/data/rag /app/data/uploads \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app/data
 USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"

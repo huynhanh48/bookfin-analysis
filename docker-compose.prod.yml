@@ -10,7 +10,7 @@
 name: bookfin-analysis
 
 x-app-environment: &app-environment
-  APP_ENV: ${APP_ENV:-production}
+  APP_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   API_PREFIX: ${API_PREFIX:-/api/v1}
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stock}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-stock_research}

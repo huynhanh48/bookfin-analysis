@@ -537,11 +537,34 @@ class IndicatorService:
         """
         ticker = symbol.upper()
         planned = planned_requests(timeframe, requests or CHART_INDICATOR_REQUESTS)
+        candles = await self.load_confirmed_series_candles(ticker, timeframe, limit, end)
+        result = await self.build_confirmed_series(ticker, timeframe, candles, planned)
+        if include_provisional and end is None and timeframe == "1D":
+            result = await self._append_provisional(result, planned)
+        return result
+
+    async def load_confirmed_series_candles(
+        self,
+        ticker: str,
+        timeframe: str,
+        limit: int,
+        end: datetime | None,
+    ) -> list[Candle]:
+        """Apply the same closed-candle cutoff for series consumers."""
         candles = await self._load_candles(ticker, timeframe, limit=limit, end=end)
         candles = self._divergence_closed_candles(candles, as_of=end)
         if not candles:
             raise InsufficientDataError(f"Mã {ticker} chưa có nến {timeframe} đã đóng.")
+        return candles
 
+    async def build_confirmed_series(
+        self,
+        ticker: str,
+        timeframe: str,
+        candles: list[Candle],
+        planned: Sequence[tuple[str, dict[str, int | float]]],
+    ) -> IndicatorSeriesSet:
+        """Build indicator series from the caller's confirmed candle snapshot."""
         ohlcv = self._build_ohlcv(candles)
         IndicatorFrame(ohlcv, [c.candle_open_time for c in candles], timeframe).validate()
         needs_benchmark = any(get_spec(name).input_kind == "benchmark" for name, _ in planned)
@@ -558,8 +581,6 @@ class IndicatorService:
             series=series,
             last_confirmed_at=candles[-1].candle_open_time,
         )
-        if include_provisional and end is None and timeframe == "1D":
-            result = await self._append_provisional(result, planned)
         return result
 
     async def scan_divergences(

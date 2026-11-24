@@ -29,6 +29,10 @@ def canonical_url(url: str) -> str:
         raise ValueError("Invalid source URL")
     if host == "localhost" or host.endswith((".local", ".internal")) or "." not in host:
         raise ValueError("Nonpublic source URL")
+    if host in ("news.google.com", "google.com", "www.google.com") and parsed.path.startswith(
+        ("/url", "/rss/articles")
+    ):
+        raise ValueError("Search redirect URL")
     try:
         if not ipaddress.ip_address(host).is_global:
             raise ValueError("Nonpublic source IP")

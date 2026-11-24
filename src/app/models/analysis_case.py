@@ -30,6 +30,7 @@ class AnalysisCase(Base):
     indicator_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
     market_context: Mapped[dict[str, Any]] = mapped_column(JSONB)
     conclusion: Mapped[str] = mapped_column(Text)
+    outcome_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     source: Mapped[str] = mapped_column(Text)
     ingest_status: Mapped[str] = mapped_column(String(20), default="PENDING")

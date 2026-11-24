@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,31 @@ class RagRepository:
     async def get(self, document_id: UUID) -> RagDocument | None:
         """Read persisted processing status."""
         return await self.session.get(RagDocument, document_id)
+
+    async def get_for_update(self, document_id: UUID) -> RagDocument | None:
+        """Serialize a removal decision with worker claims and retries."""
+        return (
+            await self.session.scalars(
+                select(RagDocument).where(RagDocument.id == document_id).with_for_update()
+            )
+        ).one_or_none()
+
+    async def list_knowledge(
+        self, limit: int, before: tuple[datetime, UUID] | None = None
+    ) -> list[RagDocument]:
+        """Page original knowledge uploads, excluding analysis-case jobs."""
+        query = select(RagDocument).where(RagDocument.namespace == "knowledge")
+        if before is not None:
+            query = query.where(tuple_(RagDocument.created_at, RagDocument.id) < before)
+        return list(
+            (
+                await self.session.scalars(
+                    query.order_by(RagDocument.created_at.desc(), RagDocument.id.desc()).limit(
+                        limit + 1
+                    )
+                )
+            ).all()
+        )
 
     async def claim(self, timeout: int) -> RagDocument | None:
         """Skip locked jobs and recover crashed work after a lease longer than timeout."""
@@ -76,7 +101,7 @@ class RagRepository:
     async def retry(self, document_id: UUID) -> RagDocument | None:
         """Explicitly retry failures; never reset a live processing job."""
         job = await self.session.get(RagDocument, document_id, with_for_update=True)
-        if job and job.status in ("FAILED", "PARTIAL"):
+        if job and job.status in ("FAILED", "PARTIAL", "REMOVED"):
             job.status, job.error_code, job.lease_until, job.attempts = "PENDING", None, None, 0
             job.stage, job.progress = "PENDING", 0
         return job

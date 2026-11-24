@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.fcdata.mapper import CandleRecord, SymbolRecord
+from app.indicators.market_structure import CandleBar
 from app.models.candle import Candle
 from app.models.ingestion import IngestionRun
 from app.models.symbol import Symbol
@@ -212,6 +213,77 @@ class MarketRepository:
         rows = list((await self._session.execute(statement)).scalars())
         rows.reverse()
         return rows
+
+    async def recent_candles_by_symbol(
+        self,
+        symbols: Sequence[str],
+        *,
+        timeframe: str = "1D",
+        limit: int = 12,
+        end: datetime | None = None,
+        price_basis: str = "RAW",
+    ) -> dict[str, list[CandleBar]]:
+        """Đọc N nến gần nhất của nhiều symbol trong một query.
+
+        Dùng window function để tránh N+1 khi screener quét toàn universe.
+
+        Args:
+            symbols: Danh sách mã.
+            timeframe: Khung thời gian.
+            limit: Số nến tối đa mỗi mã.
+            end: Chỉ lấy nến mở trước mốc này.
+            price_basis: Cơ sở giá, mặc định RAW.
+
+        Returns:
+            Dict symbol -> danh sách nến tăng dần theo thời gian.
+        """
+        normalized = [symbol.upper() for symbol in symbols if symbol.strip()]
+        if not normalized:
+            return {}
+        rank = func.row_number().over(
+            partition_by=Candle.symbol,
+            order_by=Candle.candle_open_time.desc(),
+        ).label("rank")
+        filters = [
+            Candle.symbol.in_(normalized),
+            Candle.timeframe == timeframe,
+            Candle.price_basis == price_basis,
+        ]
+        if end is not None:
+            filters.append(Candle.candle_open_time < end)
+        ranked = (
+            select(
+                Candle.symbol,
+                Candle.candle_open_time,
+                Candle.open,
+                Candle.high,
+                Candle.low,
+                Candle.close,
+                Candle.volume,
+                rank,
+            )
+            .where(*filters)
+            .subquery()
+        )
+        statement = (
+            select(ranked)
+            .where(ranked.c.rank <= limit)
+            .order_by(ranked.c.symbol, ranked.c.candle_open_time)
+        )
+        rows = (await self._session.execute(statement)).all()
+        result: dict[str, list[CandleBar]] = {}
+        for row in rows:
+            result.setdefault(row.symbol, []).append(
+                CandleBar(
+                    time=row.candle_open_time,
+                    open=float(row.open),
+                    high=float(row.high),
+                    low=float(row.low),
+                    close=float(row.close),
+                    volume=float(row.volume),
+                )
+            )
+        return result
 
     async def latest_candle_time(self, symbol: str, timeframe: str = "1D") -> datetime | None:
         """Thời điểm nến mới nhất đã lưu.

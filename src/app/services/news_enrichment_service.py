@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlsplit
 
 from app.adapters.news_search_adapter import NewsEvidenceProvider, canonical_url, publication_time
@@ -13,15 +14,38 @@ from app.schemas.evidence import NewsEvidence
 class NewsEnrichmentService:
     """Reject future/updated/undated evidence rather than fabricate historical availability."""
 
+    _COMPANY_PREFIXES = (
+        "công ty cổ phần",
+        "công ty tnhh",
+        "tổng công ty cổ phần",
+        "tổng công ty",
+        "tập đoàn",
+        "ngân hàng thương mại cổ phần",
+        "ngân hàng tmcp",
+        "ctcp",
+    )
+
     def __init__(
         self,
         settings: Settings,
         primary: NewsEvidenceProvider | None,
         fallback: NewsEvidenceProvider | None,
         cache: EvidenceCache,
+        rss: NewsEvidenceProvider | None = None,
     ):
         self.settings, self.primary, self.fallback, self.cache = settings, primary, fallback, cache
+        self.rss = rss
         self.semaphore = asyncio.Semaphore(settings.rag_provider_concurrency)
+
+    @classmethod
+    def short_company_name(cls, company: str) -> str:
+        """Drop legal-form prefixes so the search query stays focused."""
+        value = (company or "").strip()
+        lowered = value.casefold()
+        for prefix in sorted(cls._COMPANY_PREFIXES, key=len, reverse=True):
+            if lowered.startswith(prefix):
+                return value[len(prefix) :].strip(" -,.()")
+        return value
 
     async def _search(
         self,
@@ -31,26 +55,47 @@ class NewsEnrichmentService:
         start_at: datetime,
         end_at: datetime,
     ) -> tuple[list[dict], list[str]]:
-        """Try Tavily first, then Firecrawl search only when the primary fails or is empty."""
+        """Query all configured providers concurrently and merge by URL.
+
+        Tavily/Firecrawl provide search+extract; curated RSS feeds widen coverage
+        for sector and macro stories without another paid search.
+        """
         warnings: list[str] = []
-        providers: list[NewsEvidenceProvider] = [primary]
+        providers: list[tuple[str, NewsEvidenceProvider]] = [("tavily", primary)]
         if self.fallback is not None and callable(getattr(self.fallback, "search", None)):
-            providers.append(self.fallback)
-        for index, provider in enumerate(providers):
-            try:
-                async with asyncio.timeout(self.settings.rag_news_timeout_seconds):
-                    rows = await provider.search(
-                        query, analysis_at, start_at=start_at, end_at=end_at
-                    )
-            except Exception as exc:
-                warnings.append(f"news_search_failed:{type(exc).__name__}")
+            providers.append(("firecrawl", self.fallback))
+        if self.rss is not None:
+            providers.append(("rss", self.rss))
+
+        async def run(name: str, provider: NewsEvidenceProvider):
+            async with asyncio.timeout(self.settings.rag_news_timeout_seconds):
+                return name, await provider.search(
+                    query, analysis_at, start_at=start_at, end_at=end_at
+                )
+
+        results = await asyncio.gather(
+            *(run(name, provider) for name, provider in providers), return_exceptions=True
+        )
+        merged: dict[str, dict] = {}
+        for (name, _), result in zip(providers, results, strict=True):
+            if isinstance(result, BaseException):
+                warnings.append(f"news_search_failed:{name}:{type(result).__name__}")
                 continue
-            if rows:
-                if index:
-                    warnings.append("news_fallback_search_used")
-                return rows, warnings
+            _, rows = result
+            if not rows:
+                warnings.append(f"news_search_empty:{name}")
+                continue
+            if name == "firecrawl":
+                warnings.append("news_fallback_search_used")
+            elif name == "rss":
+                warnings.append("news_rss_used")
+            for row in rows:
+                url = row.get("url")
+                if url and url not in merged:
+                    merged[url] = {**row, "_provider": name}
+        if not merged:
             warnings.append("news_search_empty")
-        return [], warnings
+        return list(merged.values()), warnings
 
     async def enrich(
         self,
@@ -61,8 +106,18 @@ class NewsEnrichmentService:
         *,
         aliases: list[str] | None = None,
         window_start: datetime | None = None,
+        query: str | None = None,
+        require_terms: list[str] | None = None,
+        min_relevance: float | None = None,
+        associated_symbol: str | None = None,
     ) -> tuple[list[NewsEvidence], list[str]]:
-        """Search a signal-aware window, deduplicate, rank and extract a shortlist."""
+        """Search a signal-aware window, deduplicate, rank and extract a shortlist.
+
+        ``query``/``require_terms`` let the research agent run a separate focused
+        company query and a broader market/sector query without changing as-of
+        eligibility rules. ``require_terms=[]`` disables the term filter for an
+        intentionally broad market overview.
+        """
         if not self.settings.rag_news_enabled:
             return [], ["news_disabled"]
         primary = self.primary
@@ -72,37 +127,46 @@ class NewsEnrichmentService:
         # Signal-aware mode searches the divergence formation window (+ buffer) and
         # ends at analyzed_at; the normal lookback is the fallback when no signal exists.
         search_start = min(window_start, analysis_at) if window_start else lookback_start
+        short_company = self.short_company_name(company)
+        threshold = self.settings.rag_news_min_relevance if min_relevance is None else min_relevance
         key = content_key(
-            "news-v3",
+            "news-v4",
             symbol,
             company,
+            short_company,
             aliases or [],
             sector,
             analysis_at,
             search_start,
+            query or "",
+            require_terms if require_terms is not None else "auto",
+            threshold,
+            associated_symbol or symbol,
             self.settings.rag_news_lookback_days,
             self.settings.rag_news_signal_window_enabled,
             self.settings.rag_news_signal_buffer_days,
             self.settings.rag_news_max_sources,
-            self.settings.rag_news_min_relevance,
             self.settings.rag_news_company_domains,
+            self.settings.rag_news_rss_feeds,
             self.settings.rag_news_allow_unknown_revision,
         )
         if cached := await self.cache.get(key):
             return [NewsEvidence.model_validate(row) for row in cached["articles"]], cached[
                 "warnings"
             ]
-        query = " ".join(
-            [
-                symbol,
-                company,
-                *(aliases or []),
-                sector,
-                "công bố thông tin sự kiện doanh nghiệp sở giao dịch",
-            ]
+        search_query = query or " ".join(
+            item for item in (symbol, short_company, *(aliases or [])) if item
         )
+        if require_terms is None:
+            terms = [
+                term.casefold()
+                for term in (symbol, short_company, company, sector, *(aliases or []))
+                if term
+            ]
+        else:
+            terms = [term.casefold() for term in require_terms if term]
         candidates, warnings = await self._search(
-            primary, query, analysis_at, search_start, analysis_at
+            primary, search_query, analysis_at, search_start, analysis_at
         )
         if not candidates:
             return [], warnings
@@ -116,15 +180,9 @@ class NewsEnrichmentService:
                 if published < search_start:
                     continue
                 evidence_text = f"{row.get('title', '')} {row.get('content', '')}".casefold()
-                terms = [
-                    term.casefold() for term in (symbol, company, sector, *(aliases or [])) if term
-                ]
-                if not any(term in evidence_text for term in terms):
+                if terms and not any(term in evidence_text for term in terms):
                     continue
-                if (
-                    row.get("score") is not None
-                    and float(row["score"]) < self.settings.rag_news_min_relevance
-                ):
+                if row.get("score") is not None and float(row["score"]) < threshold:
                     continue
                 seen.add(url)
                 selected.append((row, url, published))
@@ -147,6 +205,43 @@ class NewsEnrichmentService:
 
         selected.sort(key=priority)
 
+        def is_official(host: str) -> bool:
+            return (
+                host.endswith(".gov.vn")
+                or any(
+                    host == d or host.endswith("." + d)
+                    for d in self.settings.rag_news_company_domains
+                )
+                or host in ("hsx.vn", "hnx.vn", "ssc.gov.vn")
+                or host.endswith((".hsx.vn", ".hnx.vn"))
+            )
+
+        def snippet_evidence(
+            row: dict[str, Any], url: str, published: datetime, reason: str
+        ) -> NewsEvidence | None:
+            """Keep a linked search snippet when article extraction is unavailable."""
+            snippet = str(row.get("content") or "").strip()
+            if not snippet:
+                return None
+            if reason not in warnings:
+                warnings.append(reason)
+            host = urlsplit(url).hostname or ""
+            return NewsEvidence(
+                source_url=row["url"],
+                canonical_url=url,
+                title=row.get("title", ""),
+                publisher=host,
+                published_at=published,
+                updated_at=None,
+                retrieved_at=datetime.now(UTC),
+                content=snippet[:100_000],
+                content_hash=content_key(snippet),
+                relevance=float(row.get("score", 0)),
+                associated_symbol=associated_symbol or symbol,
+                associated_sector=sector or None,
+                source_type="official" if is_official(host) else "news",
+            )
+
         async def extract(item):
             row, url, published = item
             async with self.semaphore:
@@ -154,12 +249,15 @@ class NewsEnrichmentService:
                     extract_key = content_key("article-v1", url)
                     extracted = await self.cache.get(extract_key)
                     if extracted is None:
-                        try:
-                            extracted = await primary.extract(url)
-                        except Exception:
-                            if self.fallback is None:
-                                raise
-                            extracted = await self.fallback.extract(url)
+                        if row.get("_provider") == "rss" and self.rss is not None:
+                            extracted = await self.rss.extract(url)
+                        else:
+                            try:
+                                extracted = await primary.extract(url)
+                            except Exception:
+                                if self.fallback is None:
+                                    raise
+                                extracted = await self.fallback.extract(url)
                         extracted = {
                             **extracted,
                             "raw_content": str(extracted.get("raw_content", ""))[:100_000],
@@ -200,17 +298,8 @@ class NewsEnrichmentService:
                         return None
                     content = str(extracted.get("raw_content", ""))[:100_000]
                     if not content.strip():
-                        return None
+                        return snippet_evidence(row, url, published, "news_snippet_only")
                     host = urlsplit(url).hostname or ""
-                    official = (
-                        host.endswith(".gov.vn")
-                        or any(
-                            host == d or host.endswith("." + d)
-                            for d in self.settings.rag_news_company_domains
-                        )
-                        or host in ("hsx.vn", "hnx.vn", "ssc.gov.vn")
-                        or host.endswith((".hsx.vn", ".hnx.vn"))
-                    )
                     return NewsEvidence(
                         source_url=row["url"],
                         canonical_url=url,
@@ -223,13 +312,13 @@ class NewsEnrichmentService:
                         content=content,
                         content_hash=content_key(content),
                         relevance=float(row.get("score", 0)),
-                        associated_symbol=symbol,
+                        associated_symbol=associated_symbol or symbol,
                         associated_sector=sector or None,
-                        source_type="official" if official else "news",
+                        source_type="official" if is_official(host) else "news",
                     )
                 except Exception as exc:
                     warnings.append(f"news_extract_failed:{type(exc).__name__}")
-                    return None
+                    return snippet_evidence(row, url, published, "news_snippet_only")
 
         results = await asyncio.gather(
             *(extract(item) for item in selected[: self.settings.rag_news_max_sources])

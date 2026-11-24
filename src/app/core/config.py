@@ -4,6 +4,7 @@ Mọi giá trị nhạy cảm (mật khẩu database, token, API key) chỉ đ�
 repository chỉ chứa `.env.example` với giá trị giả.
 """
 
+from datetime import time
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -105,6 +106,7 @@ class Settings(BaseSettings):
     firecrawl_api_key: str | None = Field(default=None, repr=False)
     firecrawl_base_url: str = "https://api.firecrawl.dev"
     rag_news_company_domains: list[str] = Field(default_factory=list)
+    rag_news_rss_feeds: list[str] = Field(default_factory=list)
     rag_news_max_sources: int = Field(default=5, ge=1, le=10)
     rag_news_lookback_days: int = Field(default=30, ge=1, le=365)
     rag_news_timeout_seconds: float = Field(default=20, gt=0, le=120)
@@ -131,6 +133,15 @@ class Settings(BaseSettings):
     rag_rerank_fail_open: bool = True
 
     rag_redis_mirror_enabled: bool = False
+
+    agent_enabled: bool = False
+    agent_model: str = "google/gemini-2.5-flash"
+    agent_rag_enabled: bool = False
+    agent_news_enabled: bool = False
+    agent_checkpoint_enabled: bool = True
+    agent_timeout_seconds: float = Field(default=90, gt=0, le=300)
+    agent_max_concurrency: int = Field(default=2, ge=1, le=10)
+    agent_max_pending: int = Field(default=20, ge=1, le=100)
 
     websocket_allowed_origins: list[str] = Field(
         default_factory=lambda: [
@@ -167,6 +178,21 @@ class Settings(BaseSettings):
     worker_session_close_time: str = "15:00"
     worker_session_check_seconds: float = Field(default=30, ge=5, le=300)
 
+    # Stock screener: AFL cash-flow strategy, historical scan and realtime producer.
+    screener_enabled: bool = True
+    screener_max_symbols: int = Field(default=1000, ge=1, le=2000)
+    screener_quote_batch_size: int = Field(default=50, ge=1, le=200)
+    screener_quote_stale_seconds: int = Field(default=60, ge=5, le=3600)
+    screener_results_ttl_seconds: int = Field(default=86400, ge=60)
+    screener_realtime_enabled: bool = True
+    screener_realtime_mode: Literal["watchlist", "universe", "all"] = "watchlist"
+    screener_realtime_max_symbols: int = Field(default=200, ge=1, le=2000)
+    screener_eval_interval_seconds: float = Field(default=1.0, ge=0.2, le=60)
+    screener_reconcile_seconds: float = Field(default=15.0, ge=2, le=300)
+    screener_publish_interval_seconds: float = Field(default=1.0, ge=0.2, le=60)
+    screener_event_cooldown_seconds: float = Field(default=5.0, ge=0, le=300)
+    screener_max_events_per_second: int = Field(default=20, ge=1, le=500)
+
     websocket_max_connections: int = Field(default=500, ge=1)
     websocket_queue_size: int = Field(default=100, ge=1, le=10000)
     websocket_max_subscriptions: int = Field(default=20, ge=1, le=100)
@@ -188,6 +214,7 @@ class Settings(BaseSettings):
     fcdata_ws_max_codes: int = Field(default=200, ge=1, le=200)
 
     market_timezone: str = "Asia/Ho_Chi_Minh"
+    market_close_time: str = "15:00"
 
     history_default_limit: int = Field(default=250, ge=1)
     history_max_limit: int = Field(default=1000, ge=1)
@@ -238,6 +265,11 @@ class Settings(BaseSettings):
     def market_tz(self) -> ZoneInfo:
         """Múi giờ phiên giao dịch dưới dạng `ZoneInfo`."""
         return ZoneInfo(self.market_timezone)
+
+    @property
+    def market_close(self) -> time:
+        """Giờ đóng phiên dùng để phân biệt nến provisional và confirmed."""
+        return time.fromisoformat(self.market_close_time)
 
 
 @lru_cache

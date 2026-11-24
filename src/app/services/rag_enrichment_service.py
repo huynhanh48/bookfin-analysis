@@ -256,6 +256,11 @@ class RagEnrichmentService:
         )
         timings["news_enrichment_seconds"] = branch_timings.get("news_enrichment_latency_seconds")
         technical_result = json.loads(json.dumps(technical_result, default=str))
+        from app.agents.research import RULE_VERSION, case_fingerprint
+
+        if technical_result.get("status") == "ok":
+            technical_result["research_fingerprint"] = case_fingerprint(technical_result)
+            technical_result["research_rule_version"] = RULE_VERSION
         state.technical_snapshot = technical_result
         await self.repository.link_news(case.id, articles)
         await self.stage(

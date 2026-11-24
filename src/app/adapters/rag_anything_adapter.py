@@ -16,6 +16,28 @@ from app.core.config import Settings
 from app.core.exceptions import ConfigurationError, UpstreamError
 from app.core.logging import get_logger
 
+# An empty retrieval is a normal chat outcome, not an upstream failure: the
+# library reports it through ``status="failure"`` with no entities or chunks.
+NO_CONTEXT_ANSWER = "Mình chưa tìm thấy thông tin phù hợp trong kho kiến thức cho câu hỏi này."
+_EMPTY_RESULT_MESSAGES = {"Query returned empty dataset.", "Query returned no results"}
+
+
+def is_empty_result(result: dict) -> bool:
+    """Tell a genuine retrieval failure from a query that matched no knowledge.
+
+    LightRAG returns the same ``status`` for provider errors, configuration
+    errors and empty context, so the failure reason and payload must be read
+    together; treating every failure as empty would hide broken providers.
+    """
+    if result.get("status") != "failure":
+        return False
+    if (result.get("metadata") or {}).get("failure_reason") == "no_results":
+        return True
+    data = result.get("data") or {}
+    if any(data.get(key) for key in ("entities", "relationships", "chunks")):
+        return False
+    return result.get("message") in _EMPTY_RESULT_MESSAGES
+
 
 def serialized(operation):
     """Serialize graph reads/writes within the single owning runtime."""
@@ -314,15 +336,27 @@ class RagAnythingAdapter:
                     ),
                 )
             )
-            if result.get("status") == "failure":
-                raise UpstreamError("Knowledge retrieval failed.")
-            return RagAnswer(
-                result.get("llm_response", {}).get("content", ""),
-                result.get("data", {}).get("references", []),
-                {"knowledge_hooks": rerank_metadata} if rerank_metadata else {},
-            )
         except Exception as exc:
+            get_logger(__name__).warning(
+                "rag_query_error", extra={"mode": mode, "error_type": type(exc).__name__}
+            )
             raise UpstreamError("Knowledge retrieval failed.") from exc
+        if result.get("status") == "failure":
+            if is_empty_result(result):
+                return RagAnswer(NO_CONTEXT_ANSWER)
+            get_logger(__name__).warning(
+                "rag_query_failed",
+                extra={
+                    "mode": mode,
+                    "failure_reason": str((result.get("metadata") or {}).get("failure_reason")),
+                },
+            )
+            raise UpstreamError("Knowledge retrieval failed.")
+        return RagAnswer(
+            result.get("llm_response", {}).get("content", ""),
+            result.get("data", {}).get("references", []),
+            {"knowledge_hooks": rerank_metadata} if rerank_metadata else {},
+        )
 
     @serialized
     async def retrieve(self, question: str, limit: int = 20) -> dict:
@@ -330,18 +364,35 @@ class RagAnythingAdapter:
         await self.initialize()
         from lightrag import QueryParam
 
-        result, rerank_metadata = await self._with_rerank_diagnostics(
-            self._rag.lightrag.aquery_data(
-                question,
-                QueryParam(
-                    mode="hybrid",
-                    top_k=limit,
-                    chunk_top_k=limit,
-                    enable_rerank=self.settings.rag_rerank_enabled,
-                ),
+        try:
+            result, rerank_metadata = await self._with_rerank_diagnostics(
+                self._rag.lightrag.aquery_data(
+                    question,
+                    QueryParam(
+                        mode="hybrid",
+                        top_k=limit,
+                        chunk_top_k=limit,
+                        enable_rerank=self.settings.rag_rerank_enabled,
+                    ),
+                )
             )
-        )
+        except Exception as exc:
+            get_logger(__name__).warning(
+                "rag_retrieve_error", extra={"error_type": type(exc).__name__}
+            )
+            raise UpstreamError("Knowledge retrieval failed.") from exc
         if result.get("status") == "failure":
+            if is_empty_result(result):
+                return {
+                    "entities": [],
+                    "relationships": [],
+                    "chunks": [],
+                    "_rerank_metadata": rerank_metadata,
+                }
+            get_logger(__name__).warning(
+                "rag_retrieve_failed",
+                extra={"failure_reason": str((result.get("metadata") or {}).get("failure_reason"))},
+            )
             raise UpstreamError("Knowledge retrieval failed.")
         return {**result.get("data", {}), "_rerank_metadata": rerank_metadata}
 
@@ -362,7 +413,7 @@ class RagAnythingAdapter:
         await self.initialize()
         if self._rag.lightrag is not None:
             result = await self._rag.lightrag.adelete_by_doc_id(document_id)
-            if result.status != "success":
+            if result.status not in {"success", "not_found"}:
                 raise UpstreamError("Knowledge deletion failed.")
 
     async def health_check(self) -> bool:

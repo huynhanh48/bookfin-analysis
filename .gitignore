@@ -15,7 +15,8 @@ dist/
 /agents
 .agents/
 AGENTS.md
-docs/
+docs/*
+!docs/stock-screener.md
 indicators/
 references/
 .vscode/
@@ -46,3 +47,5 @@ htmlcov/
 
 # Persistent RAG graph, chart originals and parser artifacts
 data/
+
+!docs/stock-screener.md

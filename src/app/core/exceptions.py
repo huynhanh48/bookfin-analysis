@@ -49,6 +49,13 @@ class NotFoundError(AppError):
     status_code = status.HTTP_404_NOT_FOUND
 
 
+class ConflictError(AppError):
+    """Dữ liệu đã tồn tại hoặc vi phạm ràng buộc duy nhất."""
+
+    code = "conflict"
+    status_code = status.HTTP_409_CONFLICT
+
+
 class InsufficientHistoryError(AppError):
     """Không đủ số nến để tính chỉ báo hoặc cấu trúc thị trường."""
 

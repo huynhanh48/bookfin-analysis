@@ -18,9 +18,12 @@ from app.core.redis import get_redis_client
 from app.fcdata.client import FcDataClient
 from app.repositories.indicator_repository import IndicatorRepository
 from app.repositories.market_repository import MarketRepository
+from app.repositories.watchlist_repository import WatchlistRepository
 from app.services.indicator_service import IndicatorService
 from app.services.ingestion_service import IngestionService
 from app.services.market_service import MarketService
+from app.services.screener_service import ScreenerService
+from app.services.watchlist_service import DEFAULT_OWNER_ID, WatchlistService
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -183,3 +186,51 @@ def get_indicator_service(
 MarketServiceDep = Annotated[MarketService, Depends(get_market_service)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 IndicatorServiceDep = Annotated[IndicatorService, Depends(get_indicator_service)]
+
+
+def get_owner_id() -> str:
+    """Owner hiện tại.
+
+    Hệ thống chưa có authentication nên dùng owner `"local"`. Khi thêm auth, chỉ
+    cần thay dependency này bằng principal từ token; schema/repository đã sẵn sàng.
+    """
+    return DEFAULT_OWNER_ID
+
+
+OwnerId = Annotated[str, Depends(get_owner_id)]
+
+
+def get_watchlist_repository(session: DbSession) -> WatchlistRepository:
+    """Tạo repository watchlist gắn với session request."""
+    return WatchlistRepository(session)
+
+
+WatchlistRepositoryDep = Annotated[
+    WatchlistRepository, Depends(get_watchlist_repository)
+]
+
+
+def get_watchlist_service(repository: WatchlistRepositoryDep) -> WatchlistService:
+    """Tạo service watchlist."""
+    return WatchlistService(repository)
+
+
+WatchlistServiceDep = Annotated[WatchlistService, Depends(get_watchlist_service)]
+
+
+def get_screener_service(
+    settings: AppSettings,
+    market_repository: MarketRepositoryDep,
+    fcdata: FcData,
+    redis: RedisClient,
+) -> ScreenerService:
+    """Tạo service screener cho request."""
+    return ScreenerService(
+        settings=settings,
+        market_repository=market_repository,
+        fcdata=fcdata,
+        redis=redis,
+    )
+
+
+ScreenerServiceDep = Annotated[ScreenerService, Depends(get_screener_service)]

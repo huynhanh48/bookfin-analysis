@@ -4,19 +4,38 @@ Import mọi model ở đây để `Base.metadata` đầy đủ trước khi Ale
 sinh migration.
 """
 
-from app.models.candle import Candle
-from app.models.indicator import IndicatorSnapshot, StructureEvent
-from app.models.ingestion import IngestionRun
-from app.models.symbol import Symbol
-
-__all__ = ["Candle", "IndicatorSnapshot", "IngestionRun", "StructureEvent", "Symbol"]
-
-from app.models.analysis_case import AnalysisCase, CaseEmbedding  # noqa: F401
-from app.models.analysis_evidence import (  # noqa: F401
+from app.models.analysis_case import AnalysisCase, CaseEmbedding
+from app.models.analysis_evidence import (
     AnalysisClaim,
     AnalysisEnrichment,
     AnalysisEvidence,
     NewsDocument,
     ProviderCache,
 )
-from app.models.rag_document import RagDocument  # noqa: F401
+from app.models.candle import Candle
+from app.models.chat import ChatTurn, Conversation
+from app.models.indicator import IndicatorSnapshot, StructureEvent
+from app.models.ingestion import IngestionRun
+from app.models.rag_document import RagDocument
+from app.models.symbol import Symbol
+from app.models.watchlist import Watchlist, WatchlistItem
+
+__all__ = [
+    "AnalysisCase",
+    "AnalysisClaim",
+    "AnalysisEnrichment",
+    "AnalysisEvidence",
+    "Candle",
+    "CaseEmbedding",
+    "ChatTurn",
+    "Conversation",
+    "IndicatorSnapshot",
+    "IngestionRun",
+    "NewsDocument",
+    "ProviderCache",
+    "RagDocument",
+    "StructureEvent",
+    "Symbol",
+    "Watchlist",
+    "WatchlistItem",
+]

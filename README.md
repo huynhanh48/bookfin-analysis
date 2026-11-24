@@ -15,6 +15,7 @@ Backend phân tích chứng khoán Việt Nam: market data, technical evidence, 
 | RAG | RAG-Anything 1.4.4, LightRAG 1.4.16 |
 | LLM / Vision / Embedding | OpenRouter |
 | News | Tavily, Firecrawl |
+| Stock Research Agent | LangGraph 1.2.24, langchain-openrouter 0.3.0 |
 | Đóng gói | Docker Compose, uv |
 
 ## Chạy bằng Docker
@@ -42,6 +43,11 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 Chỉ chạy **một process RAG** trên một volume/working directory.
 
+## Stock Research Agent
+
+Agent đọc nến đã đóng và indicator hiện có, sau đó tổng hợp báo cáo bằng OpenRouter.
+Hướng dẫn triển khai và các giới hạn: [docs/agent-workflow.md](docs/agent-workflow.md).
+
 ### Worker engine (Docker)
 
 Một Docker image chạy nhiều role qua command; mọi role dùng chung Job Registry và
@@ -61,6 +67,7 @@ docker compose logs -f scheduler
 | `ingest-close` | 15:05 | nạp nến đóng của 5 ngày gần nhất |
 | `recompute-indicators` | 15:20 | tính lại chỉ báo confirmed |
 | `divergence-scan` | 15:30 | quét phân kỳ phiên gần nhất |
+| `screener-scan` | 15:35 | quét AFL trên nến đã đóng |
 | `rag-ingestion` | thủ công | drain hàng đợi RAG khi API không giữ runtime |
 
 - **Registry**: thêm job mới bằng module trong `src/app/workers/jobs/` + decorator
@@ -85,6 +92,30 @@ docker compose logs -f scheduler
 - Hai service worker dùng lại image `bookfin-analysis-api:latest` (cùng Dockerfile
   `target: dev`) và mount `./src`, nên sửa code là áp dụng ngay.
 
+## Stock Screener & Watchlist
+
+Chiến lược lọc dòng tiền AFL (`docs/loc_dong_tien.afl`) được chuyển sang Python:
+
+```text
+DK1 volume > 100.000
+DK2 close > 10.000 VND
+DK3 volume > 0.8 * SMA(volume 10 phiên trước)
+DK4 close > 1.02 * close phiên trước
+DK6 close > 1.02 * SMA(close, 5)
+```
+
+- `POST /api/v1/screener/scan` — historical hoặc realtime, filter tùy chỉnh.
+- Filter `divergence` riêng: preset "Divergence", chọn số phiên gần nhất
+  (1 = phiên gần nhất, tránh cuối tuần/ngày lễ) hoặc khoảng ngày; chọn mốc
+  pivot (ngày trên chart) hoặc nến xác nhận; hỗ trợ bullish/bearish và
+  regular/hidden.
+- `GET /api/v1/screener/filters/default` — cấu hình mặc định.
+- `GET /api/v1/screener/results?profile_id=...` — snapshot realtime.
+- `/api/v1/watchlists` — CRUD watchlist; tự tạo 10 list mặc định.
+- Trang `/screener` trong `bookfin-analysis-web`.
+- Realtime dùng worker hiện tại + Redis pub/sub, không thêm container.
+- Chi tiết: `docs/stock-screener.md`.
+
 ## Env chính
 
 | Biến | Ý nghĩa |
@@ -105,8 +136,12 @@ docker compose logs -f scheduler
 | Method | Endpoint | Dùng để |
 |---|---|---|
 | `POST` | `/api/v1/rag/documents` | Nạp text/ảnh/PDF vào Knowledge RAG |
+| `GET` | `/api/v1/rag/documents` | Liệt kê nội dung Knowledge RAG theo cursor |
 | `GET` | `/api/v1/rag/documents/{id}` | Xem trạng thái document |
+| `GET` | `/api/v1/rag/documents/{id}/content` | Xem nội dung text gốc và tiến độ |
+| `GET` | `/api/v1/rag/documents/{id}/file` | Tải file gốc qua API quản trị |
 | `POST` | `/api/v1/rag/documents/{id}/retry` | Retry document lỗi |
+| `DELETE` | `/api/v1/rag/documents/{id}` | Gỡ document khỏi chỉ mục, giữ bản ghi/file gốc để kiểm toán |
 | `POST` | `/api/v1/rag/query` | Hỏi trên Knowledge RAG |
 | `POST` | `/api/v1/analysis/cases` | Tạo Analysis Case từ chart + ghi chú |
 | `GET` | `/api/v1/analysis/cases/{id}` | Xem case, claims, evidence, embeddings, outcome |
@@ -115,6 +150,13 @@ docker compose logs -f scheduler
 | `PATCH` | `/api/v1/analysis/cases/{id}/outcome` | Ghi kết quả sau phân tích |
 | `POST` | `/api/v1/analysis/search` | Tìm case bằng text/ảnh + filter |
 | `POST` | `/api/v1/rag/query/multimodal` | Hỏi đáp có citation, kèm ảnh tùy chọn |
+
+Frontend có trang `/chat` để hỏi trên Knowledge RAG và quản lý nội dung đã nạp.
+Trang dùng các API trên, không tạo một RAG pipeline khác. Tài liệu chỉ xuất hiện
+trong câu trả lời sau khi trạng thái là `COMPLETED`. Nếu API yêu cầu
+`X-Admin-Key`, nhập key trong ô trên trang; key chỉ nằm trong bộ nhớ tab và không
+được lưu vào localStorage. Mỗi câu hỏi hiện là một lượt truy vấn độc lập. Sau khi
+cập nhật backend, restart API để các route quản lý mới được đăng ký.
 
 ### Dữ liệu nến & chỉ báo
 

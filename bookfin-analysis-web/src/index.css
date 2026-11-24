@@ -44,6 +44,12 @@ body {
   cursor: pointer;
 }
 
+a.statusbar-action {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .statusbar .statusbar-action:hover {
   background: rgba(22, 119, 255, 0.08);
 }
@@ -58,7 +64,65 @@ body {
 }
 
 #container {
-  height: calc(100vh - 28px - 6px);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* Menu Selectbox tính năng mở rộng bên góc phải Header Bar */
+.bookfin-header-select-wrap {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin-left: auto;
+  padding: 0 8px;
+  border-left: solid 1px var(--klinecharts-pro-border-color, #ebedf1);
+}
+
+.bookfin-header-select {
+  height: 24px;
+  width: 105px;
+  padding: 0 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #1677ff;
+  background: #ffffff;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.bookfin-header-select:hover {
+  border-color: #1677ff;
+}
+
+.bookfin-header-select option {
+  background: #ffffff;
+  color: #051441;
+  font-weight: normal;
+  padding: 4px;
+}
+
+.bookfin-header-select option:disabled {
+  color: #8c8c8c;
+}
+
+/* Modal Watchlist */
+.bookfin-watchlist-modal {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bookfin-watchlist-modal .inner {
+  background-color: #ffffff;
+  color: #051441;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
 }
 
 /* Hàng chỉ báo custom do BookFin chèn vào modal Indicator của KLineChart Pro. */

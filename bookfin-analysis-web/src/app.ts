@@ -28,6 +28,7 @@ import { registerFibonacci } from "./overlays/fibonacci";
 import { registerOverlay } from "klinecharts";
 import { measure } from "./overlays/measure";
 import { bindDrawingTools, installDrawingTools } from "./drawingTools";
+import { installHeaderNav } from "./headerNav";
 
 const DEFAULT_SYMBOL: SymbolInfo = {
   ticker: "SSI",
@@ -35,7 +36,7 @@ const DEFAULT_SYMBOL: SymbolInfo = {
   shortName: "SSI",
   exchange: "HOSE",
   market: "stocks",
-  priceCurrency: "VND",
+  priceCurrency: "nghìn đồng",
   pricePrecision: 2,
   volumePrecision: 0,
 };
@@ -145,7 +146,7 @@ function mount(symbol: SymbolInfo, period: Period): void {
     drawingBarVisible: true,
     // Tắt logo mặc định của Pro ở giữa pane giá.
     watermark: "",
-    symbol,
+    symbol: { ...symbol, priceCurrency: "nghìn đồng" },
     period,
     periods: [
       { multiplier: 1, timespan: "day", text: "1D" },
@@ -180,9 +181,7 @@ const bridge: ChartBridge = {
 };
 
 export default function setupApp(root: HTMLDivElement): void {
-  root.innerHTML = `
-    <div id="container"></div>
-  `;
+  root.innerHTML = `<div id="container"></div>`;
 
   // Khôi phục lựa chọn đã lưu trước khi dựng chart.
   hydrateChartSettings();
@@ -201,15 +200,17 @@ export default function setupApp(root: HTMLDivElement): void {
   installIndicatorMenu();
   installLiveSymbolSearch();
   installDrawingTools();
+  installHeaderNav(
+    () => chart,
+    () => {
+      clearOverlays();
+      setStatus("Đã xoá nét vẽ của mã/khung hiện tại.", "ok");
+    },
+  );
 
   window.addEventListener("bookfin:fib-levels-changed", () => {
     // Vẽ lại để overlay Fibonacci cập nhật mức mới (state đọc lúc render).
     chart?.setPeriod({ ...chart.getPeriod() });
-  });
-
-  document.getElementById("clear-overlays")?.addEventListener("click", () => {
-    clearOverlays();
-    setStatus("Đã xoá nét vẽ của mã/khung hiện tại.", "ok");
   });
 
   window.addEventListener("beforeunload", () => {
@@ -224,5 +225,15 @@ export default function setupApp(root: HTMLDivElement): void {
     flushOverlaySave();
   });
   const saved = readWorkspaceSettings();
-  mount(saved.symbol ?? DEFAULT_SYMBOL, saved.period ?? DEFAULT_PERIOD);
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("symbol")?.trim().toUpperCase();
+  const symbol = requested
+    ? { ...DEFAULT_SYMBOL, ticker: requested, shortName: requested, name: requested }
+    : (saved.symbol ?? DEFAULT_SYMBOL);
+  const timeframe = params.get("timeframe")?.trim().toUpperCase();
+  const period: Period =
+    timeframe === "1W"
+      ? { multiplier: 1, timespan: "week", text: "1W" }
+      : (saved.period ?? DEFAULT_PERIOD);
+  mount(symbol, period);
 }

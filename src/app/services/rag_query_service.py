@@ -46,7 +46,9 @@ class RagQueryService:
         self.repository = AnalysisRepository(session)
         self.evidence = EvidenceRepository(session)
 
-    async def retrieve(self, query: AnalysisSearch) -> tuple[list[dict], dict, dict]:
+    async def retrieve(
+        self, query: AnalysisSearch, *, rerank_top_n: int | None = None
+    ) -> tuple[list[dict], dict, dict]:
         """Query independent spaces, SQL lexical records and attributable LightRAG chunks."""
         runtime = self.runtime
         diagnostics: dict[str, Any] = {"fusion": "RRF", "rrf_k": 60, "channels": [], "warnings": []}
@@ -197,7 +199,7 @@ class RagQueryService:
                 ranked = await runtime.reranker.rerank(
                     text,
                     [row["text"][:10_000] for row in selected],
-                    min(query.top_k, runtime.settings.rag_rerank_top_n),
+                    min(query.top_k, rerank_top_n or runtime.settings.rag_rerank_top_n),
                 )
                 selected = [
                     {**selected[row["index"]], "rerank_score": row["relevance_score"]}
@@ -213,9 +215,15 @@ class RagQueryService:
         diagnostics["candidate_count"] = len(fused)
         return selected[: query.top_k], diagnostics, rerank_metadata
 
-    async def search(self, query: AnalysisSearch) -> SearchResponse:
+    async def search(
+        self, query: AnalysisSearch, *, rerank_top_n: int | None = None
+    ) -> SearchResponse:
         """Keep the existing data list; expose independent similarity/fusion/rerank diagnostics."""
-        rows, retrieval, rerank = await self.retrieve(query)
+        rows, retrieval, rerank = await (
+            self.retrieve(query)
+            if rerank_top_n is None
+            else self.retrieve(query, rerank_top_n=rerank_top_n)
+        )
         matches = []
         for row in rows:
             if row["case"] is None:

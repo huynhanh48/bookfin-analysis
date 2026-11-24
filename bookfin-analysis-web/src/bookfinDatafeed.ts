@@ -153,7 +153,7 @@ export class BookfinDatafeed implements Datafeed {
         shortName: item.symbol,
         exchange: item.exchange ?? "HOSE",
         market: "stocks",
-        priceCurrency: "VND",
+        priceCurrency: "nghìn đồng",
         pricePrecision: 2,
         volumePrecision: 0,
       }));

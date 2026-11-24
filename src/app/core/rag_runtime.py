@@ -73,6 +73,7 @@ class RagRuntime:
 
         from app.adapters.firecrawl_adapter import FirecrawlExtractionAdapter
         from app.adapters.rerank_adapter import OpenRouterReranker
+        from app.adapters.rss_news_adapter import RssNewsAdapter
         from app.adapters.tavily_adapter import TavilySearchAdapter
         from app.adapters.technical_evidence_adapter import TechnicalEvidenceAdapter
         from app.adapters.vision_adapter import CachedVisionExtractor, OpenRouterVisionExtractor
@@ -113,8 +114,13 @@ class RagRuntime:
             if settings.rag_news_enabled and settings.firecrawl_api_key
             else None
         )
-        self.news_clients = [client for client in (primary, fallback) if client is not None]
-        self.news = NewsEnrichmentService(settings, primary, fallback, self.evidence_cache)
+        rss = (
+            RssNewsAdapter(settings)
+            if settings.rag_news_enabled and settings.rag_news_rss_feeds
+            else None
+        )
+        self.news_clients = [client for client in (primary, fallback, rss) if client is not None]
+        self.news = NewsEnrichmentService(settings, primary, fallback, self.evidence_cache, rss=rss)
         redis = get_redis_client() if settings.rag_redis_mirror_enabled else None
         self.mirror = RedisMemoryStore(redis) if redis is not None else None
         self.storage = LocalFileStorage(settings.rag_upload_dir)
@@ -173,7 +179,9 @@ def get_analysis_service(session: DbSession, runtime: RuntimeDep) -> AnalysisMem
 
 def get_rag_ingestion_service(session: DbSession, runtime: RuntimeDep) -> RagIngestionService:
     """Wire durable source ingestion without invoking any provider in the router."""
-    return RagIngestionService(RagRepository(session), runtime.storage, runtime.mirror)
+    return RagIngestionService(
+        RagRepository(session), runtime.storage, runtime.mirror, runtime.knowledge
+    )
 
 
 def get_rag_service(runtime: RuntimeDep) -> RagService:

@@ -10,7 +10,11 @@ from openai import AsyncOpenAI
 from app.adapters.embedding_provider import EmbeddingSpace
 from app.adapters.openrouter_adapter import OpenRouterAdapter, OpenRouterEmbeddingAdapter
 from app.adapters.rag_adapter import RagAnswer
-from app.adapters.rag_anything_adapter import RagAnythingAdapter
+from app.adapters.rag_anything_adapter import (
+    NO_CONTEXT_ANSWER,
+    RagAnythingAdapter,
+    is_empty_result,
+)
 from app.core.config import Settings
 from app.core.exceptions import ConfigurationError, UpstreamError
 from app.core.provider_metrics import collect_provider_events, summarize_provider_events
@@ -184,6 +188,57 @@ async def test_query_sources_and_close(rag):
     await rag.close()
     await rag.close()
     lib.finalize_storages.assert_awaited_once()
+
+
+async def test_empty_retrieval_answers_without_upstream_error(rag):
+    """A greeting matching no knowledge must not surface as a 502 to the chat UI."""
+    rag._rag.lightrag.aquery_llm.return_value = {
+        "status": "failure",
+        "message": "Query returned empty dataset.",
+        "metadata": {"failure_reason": "no_results", "mode": "hybrid"},
+        "data": {"entities": [], "relationships": [], "chunks": [], "references": []},
+        "llm_response": {"content": "Sorry, I'm not able to provide an answer."},
+    }
+    rag._rag.lightrag.aquery_data = AsyncMock(
+        return_value=rag._rag.lightrag.aquery_llm.return_value
+    )
+    assert await RagService(rag).retrieve_financial_knowledge("xin chào") == RagAnswer(
+        NO_CONTEXT_ANSWER
+    )
+    assert await rag.retrieve("xin chào") == {
+        "entities": [],
+        "relationships": [],
+        "chunks": [],
+        "_rerank_metadata": [],
+    }
+
+
+async def test_genuine_query_failure_still_raises(rag):
+    """Provider/configuration failures keep failing closed instead of looking empty."""
+    rag._rag.lightrag.aquery_llm.return_value = {
+        "status": "failure",
+        "message": "Query failed: provider unavailable",
+        "metadata": {},
+        "data": {},
+        "llm_response": {"content": None},
+    }
+    rag._rag.lightrag.aquery_data = AsyncMock(
+        return_value=rag._rag.lightrag.aquery_llm.return_value
+    )
+    with pytest.raises(UpstreamError, match="Knowledge retrieval failed"):
+        await rag.query("RSI?")
+    with pytest.raises(UpstreamError, match="Knowledge retrieval failed"):
+        await rag.retrieve("RSI?")
+
+
+def test_empty_result_classification():
+    assert is_empty_result({"status": "success", "data": {}}) is False
+    assert is_empty_result({"status": "failure", "metadata": {"failure_reason": "no_results"}})
+    assert is_empty_result({"status": "failure", "message": "Query returned empty dataset."})
+    assert not is_empty_result({"status": "failure", "message": "Query failed: boom"})
+    assert not is_empty_result(
+        {"status": "failure", "message": "Query returned empty dataset.", "data": {"chunks": [{}]}}
+    )
 
 
 async def test_no_local_pdf_fallback(rag, tmp_path):

@@ -16,10 +16,14 @@ class ChannelAuthorizer(Protocol):
 
 
 class MarketChannelAuthorizer:
-    """Initial policy allows market channels only; chat requires an ownership-aware policy."""
+    """Initial policy allows market and screener channels; chat requires ownership."""
 
     async def allows(self, principal: str, channel: str) -> bool:
-        return bool(re.fullmatch(r"market:[A-Z0-9._-]{1,20}:(quote|1D|1W)", channel))
+        return bool(
+            re.fullmatch(r"market:[A-Z0-9._-]{1,20}:(quote|1D|1W)", channel)
+            or re.fullmatch(r"screener:[A-Za-z0-9._-]{1,40}", channel)
+            or re.fullmatch(r"agent:[0-9a-f-]{36}", channel)
+        )
 
 
 class EventPublisher(Protocol):

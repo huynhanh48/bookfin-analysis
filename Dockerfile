@@ -25,7 +25,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 # MinerU CLI preflight imports OpenCV even for direct text/image content lists.
 RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .

@@ -28,7 +28,15 @@ target_metadata = Base.metadata
 
 def include_object(obj, name, type_, reflected, compare_to) -> bool:
     """Leave official LightRAG-owned tables out of business-schema autogeneration."""
-    return not (type_ == "table" and reflected and name.lower().startswith("lightrag_"))
+    return not (
+        type_ == "table"
+        and reflected
+        and (
+            name.lower().startswith("lightrag_")
+            or name.lower().startswith("checkpoint_")
+            or name.lower() == "checkpoints"
+        )
+    )
 
 
 def run_migrations_offline() -> None:

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.adapters.embedding_provider import EmbeddingProvider
@@ -176,6 +177,7 @@ class AnalysisMemoryService:
         if case is None:
             raise NotFoundError("Analysis case not found.")
         case.outcome = {**(case.outcome or {}), **outcome}
+        case.outcome_recorded_at = datetime.now(UTC)
         await self.repository.session.commit()
         await self.repository.session.refresh(case)
         if self.mirror:

@@ -12,26 +12,32 @@ import { registerOverlay, type OverlayFigure, type OverlayTemplate } from "kline
 interface WaveOptions {
   name: string;
   totalStep: number;
+  labels?: readonly string[];
 }
 
-function wave({ name, totalStep }: WaveOptions): OverlayTemplate {
+function wave({ name, totalStep, labels }: WaveOptions): OverlayTemplate {
   return {
     name,
     totalStep,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates }) => {
-      const texts = coordinates.map((coordinate, index) => ({
-        ...coordinate,
-        text: `(${index})`,
-        baseline: "bottom" as const,
-      }));
-      return [
-        { type: "line", attrs: { coordinates } },
-        { type: "text", ignoreEvent: true, attrs: texts },
-      ];
-    },
+    createPointFigures: ({ coordinates }) =>
+      coordinates.map((coordinate, index): OverlayFigure => {
+        const label = labels?.[index] ?? String(index);
+        const corrective = label === "A" || label === "B" || label === "C";
+        return {
+          type: "text",
+          attrs: {
+            ...coordinate,
+            y: coordinate.y - 4,
+            text: `(${label})`,
+            align: "center",
+            baseline: "bottom",
+          },
+          styles: corrective ? { color: "#c2410c", weight: "bold" } : undefined,
+        };
+      }),
   };
 }
 
@@ -100,9 +106,13 @@ const xabcd: OverlayTemplate = {
 };
 
 const TEMPLATES: OverlayTemplate[] = [
-  wave({ name: "threeWaves", totalStep: 5 }),
+  wave({ name: "threeWaves", totalStep: 5, labels: ["0", "A", "B", "C"] }),
   wave({ name: "fiveWaves", totalStep: 7 }),
-  wave({ name: "eightWaves", totalStep: 10 }),
+  wave({
+    name: "eightWaves",
+    totalStep: 10,
+    labels: ["0", "1", "2", "3", "4", "5", "A", "B", "C"],
+  }),
   wave({ name: "anyWaves", totalStep: Number.MAX_SAFE_INTEGER }),
   abcd,
   xabcd,

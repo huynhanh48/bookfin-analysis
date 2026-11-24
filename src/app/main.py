@@ -1,7 +1,7 @@
 """Điểm vào của FastAPI application."""
 
 import asyncio
-import contextlib
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -17,10 +17,54 @@ from app.core.redis import close_redis_client
 from app.fcdata.client import FcDataClient
 from app.middleware.access_logging import AccessLoggingMiddleware
 from app.middleware.request_id import RequestIdMiddleware
-from app.routers import analysis, health, indicators, market, rag, realtime
+from app.routers import (
+    agent,
+    analysis,
+    chat,
+    health,
+    indicators,
+    market,
+    rag,
+    realtime,
+    screener,
+    watchlists,
+)
+from app.services.agent_service import AgentService
 from app.services.realtime_service import MarketChannelAuthorizer, RealtimeService
+from app.services.screener_realtime_service import ScreenerRealtimeBridge
 
 logger = get_logger(__name__)
+
+
+async def _shutdown_step(name: str, operation, timeout: float) -> None:
+    """Bound one cleanup step so a stuck provider cannot block process exit.
+
+    ``asyncio.wait`` is used instead of ``wait_for`` because a cancelled
+    operation may itself ignore cancellation (for example while waiting on a
+    thread that is still finishing a provider call).
+    """
+    task = asyncio.ensure_future(operation)
+    started = time.perf_counter()
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if not done:
+        task.cancel()
+        logger.warning(
+            "shutdown_step_timeout", extra={"step": name, "timeout_seconds": timeout}
+        )
+        return
+    if task.cancelled():
+        logger.warning("shutdown_step_cancelled", extra={"step": name})
+        return
+    error = task.exception()
+    if error is not None:
+        logger.warning(
+            "shutdown_step_failed", extra={"step": name, "error_type": type(error).__name__}
+        )
+        return
+    logger.info(
+        "shutdown_step",
+        extra={"step": name, "duration_seconds": time.perf_counter() - started},
+    )
 
 
 @asynccontextmanager
@@ -47,8 +91,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_subscriptions=settings.websocket_max_subscriptions,
     )
     app.state.fcdata_client = FcDataClient(settings)
+    app.state.agent_service = AgentService(settings, app.state.realtime, app.state.fcdata_client)
     from app.services.chart_realtime_service import ChartRealtimeService
     from app.services.realtime_indicators import build_default_cache
+
+    screener_bridge_task = None
+    screener_stop = asyncio.Event()
+    app.state.screener_bridge = None
+    if settings.screener_realtime_enabled:
+        from app.core.redis import get_redis_client
+
+        redis = get_redis_client()
+        if redis is not None:
+            bridge = ScreenerRealtimeBridge(redis, app.state.realtime)
+            app.state.screener_bridge = bridge
+            screener_bridge_task = asyncio.create_task(
+                bridge.run(screener_stop), name="screener-bridge"
+            )
+        else:
+            logger.warning("screener_bridge_disabled_no_redis")
 
     chart_task = None
     if settings.chart_realtime_enabled:
@@ -68,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             runtime = RagRuntime(settings)
             app.state.rag_runtime = runtime
+            app.state.agent_service.rag_runtime = runtime
             runtime.worker_task = asyncio.create_task(consume(runtime), name="rag-consumer")
             # Retrieve exception immediately to avoid unobserved-task logs with provider details.
             runtime.worker_task.add_done_callback(
@@ -84,20 +146,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if chart_task:
             chart_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await chart_task
-        await app.state.realtime.close()
+            await _shutdown_step("chart_realtime", chart_task, 5)
+        screener_stop.set()
+        if screener_bridge_task:
+            screener_bridge_task.cancel()
+            await _shutdown_step("screener_bridge", screener_bridge_task, 5)
+        await _shutdown_step("realtime", app.state.realtime.close(), 5)
+        await _shutdown_step("agent", app.state.agent_service.close(), 5)
         runtime = app.state.rag_runtime
         if runtime:
             if runtime.worker_task:
                 runtime.worker_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await runtime.worker_task
-            with contextlib.suppress(Exception):
-                await runtime.close()
-        await app.state.fcdata_client.close()
-        await close_redis_client()
-        await dispose_engine()
+                await _shutdown_step("rag_worker", runtime.worker_task, 5)
+            await _shutdown_step("rag_runtime", runtime.close(), 8)
+        await _shutdown_step("fcdata", app.state.fcdata_client.close(), 5)
+        await _shutdown_step("redis", close_redis_client(), 5)
+        await _shutdown_step("database", dispose_engine(), 5)
         logger.info("app_stopped")
 
 
@@ -130,11 +194,15 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(realtime.router, prefix=settings.api_prefix)
+    app.include_router(agent.router, prefix=settings.api_prefix)
+    app.include_router(chat.router, prefix=settings.api_prefix)
     app.include_router(health.router)
     app.include_router(market.router, prefix=settings.api_prefix)
     app.include_router(indicators.router, prefix=settings.api_prefix)
     app.include_router(analysis.router, prefix=settings.api_prefix)
     app.include_router(rag.router, prefix=settings.api_prefix)
+    app.include_router(screener.router, prefix=settings.api_prefix)
+    app.include_router(watchlists.router, prefix=settings.api_prefix)
 
     return app
 

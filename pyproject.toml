@@ -26,6 +26,9 @@ dependencies = [
     "pillow>=12.3.0",
     "tavily-python==0.8.5",
     "firecrawl-py==4.57.0",
+    "langgraph>=1.0,<2",
+    "langgraph-checkpoint-postgres>=3,<4",
+    "langchain-openrouter>=0.1,<1",
 ]
 
 [dependency-groups]
@@ -131,6 +134,23 @@ files = [
     "src/app/workers/jobs/rag.py",
     "src/app/workers/roles/scheduler.py",
     "src/app/workers/roles/realtime.py",
+    "src/app/models/watchlist.py",
+    "src/app/repositories/watchlist_repository.py",
+    "src/app/schemas/screener.py",
+    "src/app/schemas/watchlist.py",
+    "src/app/services/screener_engine.py",
+    "src/app/services/screener_service.py",
+    "src/app/services/screener_realtime_service.py",
+    "src/app/services/watchlist_service.py",
+    "src/app/routers/screener.py",
+    "src/app/routers/watchlists.py",
+    "src/app/workers/jobs/screener.py",
+    "src/app/agents/state.py",
+    "src/app/agents/evidence.py",
+    "src/app/agents/graph.py",
+    "src/app/schemas/agent.py",
+    "src/app/services/agent_service.py",
+    "src/app/routers/agent.py",
 ]
 check_untyped_defs = true
 follow_imports = "silent"

@@ -1,5 +1,6 @@
 """Knowledge ingestion and query response contracts."""
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -24,6 +25,25 @@ class DocumentView(BaseModel):
     source: str
     status: str
     error_code: str | None
+    stage: str
+    progress: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentDetailView(DocumentView):
+    """Original text is returned only when opening one document."""
+
+    text: str
+
+
+class DocumentDetailResponse(BaseModel):
+    data: DocumentDetailView
+
+
+class DocumentListResponse(BaseModel):
+    data: list[DocumentView]
+    next_cursor: str | None = None
 
 
 class DocumentResponse(BaseModel):

@@ -5,6 +5,6 @@ khi scheduler khởi động muộn sau giờ đóng cửa, `ingest-close` luôn
 `recompute-indicators`.
 """
 
-from app.workers.jobs import indicators, ingestion, rag  # noqa: F401
+from app.workers.jobs import indicators, ingestion, rag, screener  # noqa: F401
 
-__all__ = ["indicators", "ingestion", "rag"]
+__all__ = ["indicators", "ingestion", "rag", "screener"]

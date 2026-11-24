@@ -176,11 +176,23 @@ export class BookfinDatafeed implements Datafeed {
       timeframe: spec.timeframe,
       limit: String(spec.limit),
     });
-    // Pro nạp lùi bằng mốc `to` của cửa sổ; gửi lên BE để lấy đúng đoạn lịch sử đó.
+    // KLineChart Pro 0.1.x computes the weekly loadMore `to` from epoch
+    // (1970-01-08) instead of the current window. Fall back to the first
+    // candle already loaded for the same symbol/timeframe.
+    const seriesKey = `${ticker}:${spec.timeframe}`;
+    const existing = getSeries(seriesKey);
+    const periodMs = spec.timeframe === "1W" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const plausibleTo =
+      Number.isFinite(to) && to > Date.parse("2000-01-01") && to <= Date.now() + periodMs;
+    const fallbackTo =
+      existing && existing.candles.length > 0
+        ? existing.candles[0].timestamp - periodMs
+        : null;
+    const requestTo = plausibleTo ? to : fallbackTo;
     // Lần nạp đầu (`to` gần hiện tại) bỏ `end` để BE ghép luôn nến đang chạy.
-    const isInitialLoad = !Number.isFinite(to) || to > Date.now() - 6 * 60 * 60 * 1000;
-    if (!isInitialLoad) {
-      query.set("end", new Date(to).toISOString());
+    const isInitialLoad = requestTo === null || requestTo > Date.now() - 6 * 60 * 60 * 1000;
+    if (!isInitialLoad && requestTo !== null) {
+      query.set("end", new Date(requestTo).toISOString());
     }
     query.set("include_provisional", "1");
     for (const indicator of REQUESTED_INDICATORS) {
@@ -316,8 +328,14 @@ export class BookfinDatafeed implements Datafeed {
 
       // Pro nạp theo cửa sổ: chỉ trả nến nằm trong [from, to] để `applyMoreData`
       // không ghép trùng dữ liệu khi cuộn hoặc đổi mã.
-      const lower = Number.isFinite(from) && from > 0 ? from : Number.NEGATIVE_INFINITY;
-      const upper = Number.isFinite(to) && to > 0 ? to : Number.POSITIVE_INFINITY;
+      const plausibleFrom =
+        Number.isFinite(from) && from > Date.parse("2000-01-01");
+      const lower = plausibleFrom
+        ? from
+        : requestTo !== null
+          ? requestTo - 500 * periodMs
+          : Number.NEGATIVE_INFINITY;
+      const upper = requestTo !== null ? requestTo : Number.POSITIVE_INFINITY;
       const window = candles.filter(
         (candle) => candle.timestamp >= lower && candle.timestamp <= upper,
       );

@@ -13,7 +13,6 @@ dist-ssr
 .next
 *.local
 pnpm-lock.yaml
-package-lock.json
 
 # Editor directories and files
 .vscode/*
@@ -27,3 +26,6 @@ package-lock.json
 *.sw?
 
 pro-reference/docs/
+
+# Nested reference app lockfile is not used by the BookFin web image
+pro-reference/package-lock.json

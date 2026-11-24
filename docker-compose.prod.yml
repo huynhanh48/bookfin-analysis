@@ -1,0 +1,201 @@
+# Production stack for BookFin Analysis.
+#
+# Usage:
+#   cp .env.example .env   # fill secrets on the server, never commit .env
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Public entrypoint is the frontend container (Nginx). It proxies /api and /ws
+# to the API container; PostgreSQL and Redis bind to 127.0.0.1 only.
+name: bookfin-analysis
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  API_PREFIX: ${API_PREFIX:-/api/v1}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stock}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-stock_research}
+  REDIS_ENABLED: "true"
+  REDIS_URL: redis://${REDIS_USERNAME:-admin}:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+  RAG_ENABLED: ${RAG_ENABLED:-true}
+  RAG_STORAGE_DIR: /app/data/rag
+  RAG_UPLOAD_DIR: /app/data/uploads
+  RAG_REDIS_MIRROR_ENABLED: ${RAG_REDIS_MIRROR_ENABLED:-true}
+  FCDATA_BASE_URL: ${FCDATA_BASE_URL:-https://fcdata.bookfin.vn}
+  FCDATA_WS_URL: ${FCDATA_WS_URL:-wss://fcdata.bookfin.vn/ws}
+  MARKET_TIMEZONE: ${MARKET_TIMEZONE:-Asia/Ho_Chi_Minh}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:?Set ADMIN_API_KEY in .env}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+  AGENT_ENABLED: ${AGENT_ENABLED:-true}
+  AGENT_MODEL: ${AGENT_MODEL:-deepseek/deepseek-v4.1-flash}
+  AGENT_NEWS_ENABLED: ${AGENT_NEWS_ENABLED:-true}
+  AGENT_RAG_ENABLED: ${AGENT_RAG_ENABLED:-false}
+  RAG_NEWS_RSS_FEEDS: ${RAG_NEWS_RSS_FEEDS:-[]}
+
+x-app-build: &app-build
+  context: .
+  target: runtime
+
+x-app-image: &app-image
+  image: bookfin-analysis-api:${IMAGE_TAG:-v1.1.0}
+
+x-app-volumes: &app-volumes
+  - rag_data:/app/data
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stock_research}
+      POSTGRES_USER: ${POSTGRES_USER:-stock}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_USERNAME: ${REDIS_USERNAME:-admin}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command: ["sh", "/usr/local/etc/redis/start.sh"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/start.sh:/usr/local/etc/redis/start.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --user "$$REDIS_USERNAME" ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    <<: *app-image
+    build: *app-build
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    <<: *app-image
+    build: *app-build
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes: *app-volumes
+    expose:
+      - "8000"
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  scheduler:
+    <<: *app-image
+    build: *app-build
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers", "scheduler"]
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes: *app-volumes
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers", "health", "--role", "scheduler", "--max-age", "120"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  realtime:
+    <<: *app-image
+    build: *app-build
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - >-
+        python -m app.workers realtime
+        --symbols "${REALTIME_WORKER_SYMBOLS:-FPT,SSI,HPG,VNM,VIC}"
+        --recompute-on-close
+    env_file:
+      - .env
+    environment:
+      <<: *app-environment
+      REALTIME_WORKER_SYMBOLS: ${REALTIME_WORKER_SYMBOLS:-FPT,SSI,HPG,VNM,VIC}
+    volumes: *app-volumes
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers", "health", "--role", "realtime", "--max-age", "120"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./bookfin-analysis-web
+      dockerfile: Dockerfile
+    image: bookfin-analysis-web:${IMAGE_TAG:-v1.1.0}
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app-image
+    build: *app-build
+    profiles: ["worker"]
+    command: ["python", "-m", "app.workers", "run", "divergence-scan", "--param", "limit=20"]
+    env_file:
+      - .env
+    environment: *app-environment
+    volumes: *app-volumes
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  rag_data:

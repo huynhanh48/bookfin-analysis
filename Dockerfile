@@ -7,7 +7,7 @@
 #     docker-compose mount ./src vào container nên sửa code là chạy lại ngay.
 FROM ghcr.io/astral-sh/uv:0.12.5 AS uv
 
-FROM python:3.12-slim AS base
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -47,7 +47,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
-FROM base AS dev
+FROM runtime AS dev
 
 # Dev cần pytest/ruff/respx để chạy test và lint ngay trong container.
 USER root

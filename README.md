@@ -33,6 +33,34 @@ curl -s http://127.0.0.1:8000/health
 curl -s http://127.0.0.1:8000/ready
 ```
 
+
+## Deploy production bằng Docker
+
+Stack production đóng gói API, frontend Nginx, PostgreSQL/pgvector, Redis,
+migration và các worker role:
+
+```bash
+cp .env.example .env
+# Bắt buộc: POSTGRES_PASSWORD, REDIS_PASSWORD, ADMIN_API_KEY,
+# OPENROUTER_API_KEY, AGENT_ENABLED/AGENT_NEWS_ENABLED nếu dùng agent.
+
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+
+# Frontend (Nginx) là entrypoint công khai, mặc định cổng 8080:
+# http://<server>:${WEB_PORT:-8080}
+# Nginx proxy /api/ và WebSocket /api/v1/ws tới API container.
+
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f api frontend
+```
+
+- `ADMIN_API_KEY` bắt buộc vì `APP_ENV=production`; frontend sẽ hỏi key ở lần gọi API đầu tiên và lưu localStorage.
+- `migrate` chạy `alembic upgrade head` trước khi API/worker khởi động.
+- `rag_data` là named volume dùng chung; chỉ API được sở hữu RAG runtime (one process per volume).
+- PostgreSQL/Redis chỉ bind `127.0.0.1`, không public trực tiếp.
+- Đổi image tag bằng `IMAGE_TAG=v1.1.0`.
+
 Chạy local không Docker:
 
 ```bash

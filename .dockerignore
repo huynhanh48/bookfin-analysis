@@ -10,6 +10,8 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+bookfin-analysis-web/
+fe/
 tests/
 references/
 

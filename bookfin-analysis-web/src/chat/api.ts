@@ -44,10 +44,14 @@ export interface ChatMessage {
   };
 }
 
-let adminKey = "";
+let adminKey =
+  typeof localStorage !== "undefined" ? localStorage.getItem("bookfin_admin_key") ?? "" : "";
 
 export function setAdminKey(value: string): void {
   adminKey = value.trim();
+  if (typeof localStorage === "undefined") return;
+  if (adminKey) localStorage.setItem("bookfin_admin_key", adminKey);
+  else localStorage.removeItem("bookfin_admin_key");
 }
 
 async function request<T>(path: string, init: RequestInit = {}, prefix = "/rag"): Promise<T> {
@@ -62,6 +66,17 @@ async function request<T>(path: string, init: RequestInit = {}, prefix = "/rag")
   } catch (error) {
     if (signal?.aborted) throw new Error("Máy chủ chat chưa phản hồi. Vui lòng thử lại.");
     throw error;
+  }
+  if (
+    !adminKey &&
+    (response.status === 401 || response.status === 403) &&
+    typeof window !== "undefined"
+  ) {
+    const entered = window.prompt("Nhập Admin API Key để tiếp tục:");
+    if (entered?.trim()) {
+      setAdminKey(entered);
+      return request<T>(path, init, prefix);
+    }
   }
   if (!response.ok) {
     let message = `HTTP ${response.status}`;

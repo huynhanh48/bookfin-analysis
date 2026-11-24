@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiAuth";
 import { ChartRealtime } from "./chartRealtime";
 import type {
   Datafeed,
@@ -137,7 +138,7 @@ export class BookfinDatafeed implements Datafeed {
     const term = search.trim().toUpperCase();
     const params = new URLSearchParams({ limit: "1000" });
     if (term) params.set("q", term);
-    const response = await fetch(`/api/v1/market/symbols?${params.toString()}`);
+    const response = await apiFetch(`/api/v1/market/symbols?${params.toString()}`);
     if (!response.ok) return [];
     const body = (await response.json()) as SymbolListDto;
     return body.items
@@ -201,7 +202,7 @@ export class BookfinDatafeed implements Datafeed {
     }
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/v1/indicators/${encodeURIComponent(ticker)}/series?${query.toString()}`,
       );
       if (!response.ok) {

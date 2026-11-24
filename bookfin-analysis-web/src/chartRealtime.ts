@@ -1,4 +1,5 @@
 import type { KLineData } from "klinecharts";
+import { getAdminKey } from "./apiAuth";
 import { applyProvisionalIndicators, markConfirmed } from "./seriesStore";
 
 /** One chart subscription; cancellation invalidates all old socket callbacks. */
@@ -21,6 +22,13 @@ export class ChartRealtime {
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       const socket = new WebSocket(url);
       this.socket = socket;
+      // The server waits for the first frame before sending `ready` whenever
+      // ADMIN_API_KEY is configured. Browsers cannot set X-Admin-Key on a
+      // WebSocket handshake, so authenticate as soon as the socket opens.
+      socket.onopen = () => {
+        const key = getAdminKey();
+        if (key) socket.send(JSON.stringify({ type: "authenticate", token: key }));
+      };
       socket.onmessage = event => {
         if (generation !== this.generation) return;
         try {

@@ -1,4 +1,5 @@
 import type { KLineChartPro, SymbolInfo } from "@klinecharts/pro";
+import { apiFetch } from "./apiAuth";
 import { watchlistApi } from "./screener/api";
 import type { WatchlistOut } from "./screener/types";
 
@@ -27,7 +28,7 @@ async function fetchSymbolsMeta(symbols: string[]): Promise<void> {
   const missing = symbols.filter((s) => !metaCache.has(s) || metaCache.get(s)?.company_name === undefined);
   if (missing.length > 0) {
     try {
-      const res = await fetch(`/api/v1/market/symbols?limit=1000`);
+      const res = await apiFetch(`/api/v1/market/symbols?limit=1000`);
       if (res.ok) {
         const data = await res.json();
         for (const item of data.items || []) {
@@ -48,7 +49,7 @@ async function fetchSymbolsMeta(symbols: string[]): Promise<void> {
   await Promise.all(
     symbols.map(async (symbol) => {
       try {
-        const qRes = await fetch(`/api/v1/market/quotes/${encodeURIComponent(symbol)}`);
+        const qRes = await apiFetch(`/api/v1/market/quotes/${encodeURIComponent(symbol)}`);
         if (qRes.ok) {
           const q = await qRes.json();
           const prev = metaCache.get(symbol) || {};

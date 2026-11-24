@@ -192,8 +192,8 @@ DK6 close > 1.02 * SMA(close, 5)
 Frontend có trang `/chat` để hỏi trên Knowledge RAG và quản lý nội dung đã nạp.
 Trang dùng các API trên, không tạo một RAG pipeline khác. Tài liệu chỉ xuất hiện
 trong câu trả lời sau khi trạng thái là `COMPLETED`. Nếu API yêu cầu
-`X-Admin-Key`, nhập key trong ô trên trang; key chỉ nằm trong bộ nhớ tab và không
-được lưu vào localStorage. Mỗi câu hỏi hiện là một lượt truy vấn độc lập. Sau khi
+`X-Admin-Key`, frontend sẽ hỏi key và lưu vào `localStorage["bookfin_admin_key"]`
+để chart, chat và WebSocket dùng lại. Mỗi câu hỏi hiện là một lượt truy vấn độc lập. Sau khi
 cập nhật backend, restart API để các route quản lý mới được đăng ký.
 
 ### Dữ liệu nến & chỉ báo

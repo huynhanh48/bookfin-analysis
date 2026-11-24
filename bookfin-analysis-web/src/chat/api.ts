@@ -1,3 +1,7 @@
+import { apiFetch, getAdminKey } from "../apiAuth";
+
+export { setAdminKey } from "../apiAuth";
+
 export type DocumentStatus = "PENDING" | "PROCESSING" | "EXTRACTING" | "ENRICHING" |
   "VERIFYING" | "NORMALIZING" | "INDEXING" | "COMPLETED" | "PARTIAL" |
   "FAILED" | "DELETING" | "REMOVED";
@@ -44,39 +48,16 @@ export interface ChatMessage {
   };
 }
 
-let adminKey =
-  typeof localStorage !== "undefined" ? localStorage.getItem("bookfin_admin_key") ?? "" : "";
-
-export function setAdminKey(value: string): void {
-  adminKey = value.trim();
-  if (typeof localStorage === "undefined") return;
-  if (adminKey) localStorage.setItem("bookfin_admin_key", adminKey);
-  else localStorage.removeItem("bookfin_admin_key");
-}
-
 async function request<T>(path: string, init: RequestInit = {}, prefix = "/rag"): Promise<T> {
-  const headers = new Headers(init.headers);
-  if (adminKey) headers.set("X-Admin-Key", adminKey);
   const signal = prefix === "/chat"
     ? AbortSignal.timeout(path.endsWith("/turns") ? 340_000 : 10_000)
     : init.signal;
   let response: Response;
   try {
-    response = await fetch(`/api/v1${prefix}${path}`, { ...init, headers, signal });
+    response = await apiFetch(`/api/v1${prefix}${path}`, { ...init, signal });
   } catch (error) {
     if (signal?.aborted) throw new Error("Máy chủ chat chưa phản hồi. Vui lòng thử lại.");
     throw error;
-  }
-  if (
-    !adminKey &&
-    (response.status === 401 || response.status === 403) &&
-    typeof window !== "undefined"
-  ) {
-    const entered = window.prompt("Nhập Admin API Key để tiếp tục:");
-    if (entered?.trim()) {
-      setAdminKey(entered);
-      return request<T>(path, init, prefix);
-    }
   }
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
@@ -181,9 +162,7 @@ export const knowledgeApi = {
     `/documents/${encodeURIComponent(id)}/content`,
   ),
   file: async (id: string): Promise<Blob> => {
-    const headers = new Headers();
-    if (adminKey) headers.set("X-Admin-Key", adminKey);
-    const response = await fetch(`/api/v1/rag/documents/${encodeURIComponent(id)}/file`, { headers });
+    const response = await apiFetch(`/api/v1/rag/documents/${encodeURIComponent(id)}/file`);
     if (!response.ok) throw new Error(`Không tải được file gốc (HTTP ${response.status}).`);
     return response.blob();
   },
@@ -227,7 +206,8 @@ export const researchApi = {
     const socket = new WebSocket(url);
     const channel = `agent:${id}`;
     socket.onopen = () => {
-      if (adminKey) socket.send(JSON.stringify({ type: "authenticate", token: adminKey }));
+      const key = getAdminKey();
+      if (key) socket.send(JSON.stringify({ type: "authenticate", token: key }));
     };
     socket.onmessage = ({ data }) => {
       try {
@@ -300,9 +280,7 @@ export const analysisCaseApi = {
     }, "");
   },
   chart: async (id: string): Promise<Blob> => {
-    const headers = new Headers();
-    if (adminKey) headers.set("X-Admin-Key", adminKey);
-    const response = await fetch(`/api/v1/analysis/cases/${encodeURIComponent(id)}/chart`, { headers });
+    const response = await apiFetch(`/api/v1/analysis/cases/${encodeURIComponent(id)}/chart`);
     if (!response.ok) throw new Error(`Không tải được chart (HTTP ${response.status}).`);
     return response.blob();
   },

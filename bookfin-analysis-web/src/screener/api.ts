@@ -1,3 +1,4 @@
+import { apiFetch } from "../apiAuth";
 import type {
   ScreenerConditions,
   ScreenerScanRequest,
@@ -11,7 +12,7 @@ import type {
 const BASE = "/api/v1";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await apiFetch(`${BASE}${path}`, {
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(10000),
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },

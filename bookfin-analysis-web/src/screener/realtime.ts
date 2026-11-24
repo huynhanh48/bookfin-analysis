@@ -1,3 +1,4 @@
+import { getAdminKey } from "../apiAuth";
 import type { ScreenerRow } from "./types";
 
 export interface ScreenerUpdate {
@@ -39,6 +40,10 @@ export class ScreenerSocket {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(url);
       this.socket = socket;
+      socket.onopen = () => {
+        const key = getAdminKey();
+        if (key) socket.send(JSON.stringify({ type: "authenticate", token: key }));
+      };
       socket.onmessage = (event) => {
         if (generation !== this.generation) return;
         try {

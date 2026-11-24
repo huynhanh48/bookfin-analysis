@@ -98,15 +98,17 @@ services:
   bootstrap:
     <<: *app-image
     restart: "no"
+    # `|| true`: seeding is best-effort. A stale image or transient FCData
+    # failure must not keep the API/frontend down.
     command:
-      - python
-      - -m
-      - app.workers.seed_history
-      - --sync-symbols
-      - --symbols
-      - ${BOOTSTRAP_SYMBOLS:-FPT,SSI,HPG,VNM,VIC,VNINDEX}
-      - --days
-      - ${BOOTSTRAP_LOOKBACK_DAYS:-1200}
+      - sh
+      - -c
+      - >-
+        python -m app.workers.seed_history
+        --sync-symbols
+        --symbols "${BOOTSTRAP_SYMBOLS:-FPT,SSI,HPG,VNM,VIC,VNINDEX}"
+        --days "${BOOTSTRAP_LOOKBACK_DAYS:-1200}"
+        || true
     env_file:
       - .env
     environment: *app-environment

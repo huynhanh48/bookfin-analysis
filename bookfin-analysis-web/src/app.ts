@@ -95,6 +95,14 @@ function bindChartFeatures(
 
   attachOverlayPersistence(klineChart, overlayScope, host);
   attachIndicatorPersistence(klineChart);
+  // Keep the latest candle next to the price axis instead of a large blank
+  // right gutter. Pro otherwise leaves the default 80px offset, which makes
+  // the series look cut off when zoomed out.
+  try {
+    klineChart.setOffsetRightDistance(8);
+  } catch {
+    // Older chart builds may not expose the optional viewport helper.
+  }
   bindDrawingTools((options) => klineChart.createOverlay(options));
   if (import.meta.env.DEV) {
     // Chỉ tồn tại ở dev, dùng để kiểm tra/ tự động hoá thao tác chart.

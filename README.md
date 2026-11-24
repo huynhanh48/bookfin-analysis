@@ -60,7 +60,11 @@ docker compose -f docker-compose.prod.yml up -d
 - API: `127.0.0.1:8000` — PostgreSQL/Redis chỉ bind localhost.
 - Domain deploy phải có trong `WEBSOCKET_ALLOWED_ORIGINS` (cả `http://` và `https://`), mặc định đã có `http://analysis.bookfin.vn` và `https://analysis.bookfin.vn`.
 - Migration tự chạy qua service `migrate`.
-- Lần deploy đầu, service `bootstrap` tự sync danh mục và nạp `BOOTSTRAP_LOOKBACK_DAYS` ngày cho các mã trong `BOOTSTRAP_SYMBOLS` trước khi API start. Thêm mã cần xem chart vào biến này, hoặc chạy backfill thủ công:
+- Service `bootstrap` chạy nền sau `migrate`: sync danh mục và nạp `BOOTSTRAP_LOOKBACK_DAYS` ngày cho toàn bộ mã (`BOOTSTRAP_SYMBOLS=all`). Lần đầu có thể mất vài phút; theo dõi:
+  ```bash
+  docker compose -f docker-compose.prod.yml logs -f bootstrap
+  ```
+  Muốn seed nhanh một nhóm nhỏ, đặt `BOOTSTRAP_SYMBOLS=FPT,SSI,HPG`; thêm mã về sau bằng backfill thủ công:
   ```bash
   docker compose -f docker-compose.prod.yml --profile worker run --rm worker \
     python -m app.workers.backfill --symbols SSI,FPT --days 1200

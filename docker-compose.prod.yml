@@ -99,14 +99,17 @@ services:
     <<: *app-image
     restart: "no"
     # `|| true`: seeding is best-effort. A stale image or transient FCData
-    # failure must not keep the API/frontend down.
+    # failure must not keep the API/frontend down. Runs in the background while
+    # the API serves already-seeded symbols.
     command:
       - sh
       - -c
       - >-
         python -m app.workers.seed_history
         --sync-symbols
-        --symbols "${BOOTSTRAP_SYMBOLS:-FPT,SSI,HPG,VNM,VIC,VNINDEX}"
+        --symbols "${BOOTSTRAP_SYMBOLS:-all}"
+        --limit "${BOOTSTRAP_MAX_SYMBOLS:-1000}"
+        --concurrency "${BOOTSTRAP_CONCURRENCY:-8}"
         --days "${BOOTSTRAP_LOOKBACK_DAYS:-1200}"
         || true
     env_file:
@@ -139,8 +142,6 @@ services:
       redis:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
-      bootstrap:
         condition: service_completed_successfully
     stop_grace_period: 30s
 

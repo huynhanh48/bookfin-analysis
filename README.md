@@ -56,6 +56,7 @@ docker compose -f docker-compose.prod.yml up -d
 ```
 
 - API: `127.0.0.1:8000` — PostgreSQL/Redis chỉ bind localhost.
+- Domain deploy phải có trong `WEBSOCKET_ALLOWED_ORIGINS` (cả `http://` và `https://`), mặc định đã có `http://analysis.bookfin.vn` và `https://analysis.bookfin.vn`.
 - Migration tự chạy qua service `migrate`.
 - Update:
   ```bash

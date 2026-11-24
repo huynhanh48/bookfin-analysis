@@ -29,6 +29,10 @@ dependencies = [
     "langgraph>=1.0,<2",
     "langgraph-checkpoint-postgres>=3,<4",
     "langchain-openrouter>=0.1,<1",
+    # MinerU (via RAG-Anything) needs PyTorch on Linux, but production is CPU-only.
+    # Pin the direct requirement here so tool.uv.sources can select the CPU wheel.
+    "torch==2.15.0; sys_platform == 'linux'",
+    "torchvision==0.29.2; sys_platform == 'linux'",
 ]
 
 [dependency-groups]
@@ -39,6 +43,24 @@ dev = [
     "respx",
     "mypy>=2.4.1",
 ]
+
+[tool.uv]
+# MinerU ships a Gradio UI (`mineru-gradio`) that this API never starts.
+# RAG-Anything calls the `mineru` CLI directly, so these UI-only packages are dead weight.
+exclude-dependencies = [
+    { package = { name = "mineru", version = "3.4.5" }, dependencies = ["gradio", "gradio-pdf"] },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# Production runs on CPU-only VPS hosts. The default Linux PyTorch wheel pulls
+# CUDA libraries and Triton, which are never used by remote MinerU parsing.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [build-system]
 requires = ["hatchling"]

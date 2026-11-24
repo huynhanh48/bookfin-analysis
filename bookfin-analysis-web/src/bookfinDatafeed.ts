@@ -80,9 +80,10 @@ interface PeriodSpec {
 }
 
 const PERIODS: Record<string, PeriodSpec> = {
-  // Mỗi cửa sổ của Pro là 500 đơn vị thời gian, nên 400 nến là đủ và giữ payload nhẹ.
-  day: { timeframe: "1D", limit: 400 },
-  week: { timeframe: "1W", limit: 400 },
+  // Pro yêu cầu cửa sổ 500 kỳ. Lấy dư 800 nến để mỗi cửa sổ mới có đủ
+  // warmup cho Ichimoku/MACD/RSI/ADX, tránh khoảng trống chỉ báo khi loadMore.
+  day: { timeframe: "1D", limit: 800 },
+  week: { timeframe: "1W", limit: 800 },
 };
 
 // Bộ chỉ báo chart cần; cùng công thức với engine chỉ báo của BE.

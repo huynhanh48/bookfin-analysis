@@ -21,7 +21,7 @@ COPY --from=uv /uv /uvx /bin/
 
 # Cài dependency trước để tận dụng cache layer khi source thay đổi.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --no-cache
 
 # MinerU CLI preflight imports OpenCV even for direct text/image content lists.
 RUN apt-get update -qq \
@@ -29,7 +29,7 @@ RUN apt-get update -qq \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-cache
 
 # Chạy bằng user không phải root.
 # Chỉ cấp quyền ghi cho thư mục dữ liệu; source và .venv chỉ cần đọc.

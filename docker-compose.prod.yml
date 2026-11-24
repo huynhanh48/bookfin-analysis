@@ -95,6 +95,29 @@ services:
       redis:
         condition: service_healthy
 
+  bootstrap:
+    <<: *app-image
+    restart: "no"
+    command:
+      - python
+      - -m
+      - app.workers.seed_history
+      - --sync-symbols
+      - --symbols
+      - ${BOOTSTRAP_SYMBOLS:-FPT,SSI,HPG,VNM,VIC,VNINDEX}
+      - --days
+      - ${BOOTSTRAP_LOOKBACK_DAYS:-1200}
+    env_file:
+      - .env
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   api:
     <<: *app-image
     build: *app-build
@@ -114,6 +137,8 @@ services:
       redis:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      bootstrap:
         condition: service_completed_successfully
     stop_grace_period: 30s
 

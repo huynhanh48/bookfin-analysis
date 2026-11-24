@@ -89,9 +89,13 @@ async def run(symbols: list[str], days: int, sync_symbols: bool) -> None:
 
         for symbol in symbols:
             try:
-                existing = await repository.get_candles(symbol, "1D", limit=1)
-                if existing:
-                    start = end - timedelta(days=settings.ingest_incremental_days)
+                # A few recent candles are not enough for Ichimoku/MACD warmup.
+                # Treat a short series as an incomplete initial seed.
+                existing = await repository.get_candles(symbol, "1D", limit=400)
+                if len(existing) >= 400:
+                    latest = existing[-1].candle_open_time.date()
+                    start = latest - timedelta(days=settings.ingest_incremental_days)
+                    start = min(start, end - timedelta(days=1))
                     mode = "incremental"
                 else:
                     start = end - timedelta(days=days)

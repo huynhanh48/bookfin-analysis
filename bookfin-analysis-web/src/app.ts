@@ -95,11 +95,12 @@ function bindChartFeatures(
 
   attachOverlayPersistence(klineChart, overlayScope, host);
   attachIndicatorPersistence(klineChart);
-  // Keep the latest candle next to the price axis instead of a large blank
-  // right gutter. Pro otherwise leaves the default 80px offset, which makes
-  // the series look cut off when zoomed out.
+  // Ichimoku projects Senkou A/B (and Chikou back) by 26 bars. Reserve enough
+  // right gutter for that projection so the cloud is not clipped at the last
+  // candle. 30 bars also leaves a small future margin.
   try {
-    klineChart.setOffsetRightDistance(8);
+    const barSpace = klineChart.getBarSpace();
+    klineChart.setOffsetRightDistance(Math.max(24, Math.round(barSpace * 30)));
   } catch {
     // Older chart builds may not expose the optional viewport helper.
   }

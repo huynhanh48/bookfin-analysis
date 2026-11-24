@@ -64,6 +64,12 @@ docker compose -f docker-compose.prod.yml up -d
   ```bash
   docker compose -f docker-compose.prod.yml logs -f bootstrap
   ```
+  Nếu DB đã seed 1200 ngày và muốn lùi xa hơn (ví dụ 10 năm), chạy một lần:
+  ```bash
+  docker compose -f docker-compose.prod.yml run --rm --no-deps bootstrap \
+    python -m app.workers.seed_history --symbols all --days 3650 --full --concurrency 8
+  ```
+  `--full` chỉ nạp thêm phần lịch sử còn thiếu; lần sau bootstrap thường sẽ chỉ cập nhật phiên mới.
   Muốn seed nhanh một nhóm nhỏ, đặt `BOOTSTRAP_SYMBOLS=FPT,SSI,HPG`; thêm mã về sau bằng backfill thủ công:
   ```bash
   docker compose -f docker-compose.prod.yml --profile worker run --rm worker \

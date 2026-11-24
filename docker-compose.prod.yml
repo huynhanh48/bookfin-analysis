@@ -110,7 +110,7 @@ services:
         --symbols "${BOOTSTRAP_SYMBOLS:-all}"
         --limit "${BOOTSTRAP_MAX_SYMBOLS:-1000}"
         --concurrency "${BOOTSTRAP_CONCURRENCY:-8}"
-        --days "${BOOTSTRAP_LOOKBACK_DAYS:-1200}"
+        --days "${BOOTSTRAP_LOOKBACK_DAYS:-3650}"
         || true
     env_file:
       - .env

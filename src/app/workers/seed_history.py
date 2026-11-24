@@ -29,11 +29,12 @@ from app.services.ingestion_service import IngestionService
 
 logger = get_logger(__name__)
 
-_DEFAULT_LOOKBACK_DAYS = 1200
+_DEFAULT_LOOKBACK_DAYS = 3650
 _DEFAULT_MAX_SYMBOLS = 1000
 _DEFAULT_CONCURRENCY = 8
 _MIN_HISTORY_CANDLES = 400
 _FRESH_WITHIN_DAYS = 3
+_HISTORY_TOLERANCE_DAYS = 7
 
 
 def _env_int(name: str, default: int) -> int:
@@ -78,6 +79,11 @@ def _parse_args() -> argparse.Namespace:
         "--sync-symbols",
         action="store_true",
         help="Sync the FCData symbol catalog before backfilling.",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Extend existing symbols backwards to the requested --days window.",
     )
     return parser.parse_args()
 
@@ -148,6 +154,7 @@ async def _seed_symbol(
     symbol: str,
     end,
     days: int,
+    full: bool,
     semaphore: asyncio.Semaphore,
 ) -> None:
     """Backfill one symbol, using a dedicated DB session per concurrent task."""
@@ -155,22 +162,30 @@ async def _seed_symbol(
         try:
             async with session_scope() as session:
                 repository = MarketRepository(session)
+                target_start = end - timedelta(days=days)
+                first, last, total = await repository.get_candle_bounds(symbol, "1D")
                 # A few recent candles are not enough for Ichimoku/MACD warmup;
                 # treat a short series as an incomplete initial seed.
-                existing = await repository.get_candles(
-                    symbol, "1D", limit=_MIN_HISTORY_CANDLES
-                )
-                if len(existing) >= _MIN_HISTORY_CANDLES:
-                    latest = existing[-1].candle_open_time.date()
-                    if latest >= end - timedelta(days=_FRESH_WITHIN_DAYS):
+                if total == 0 or total < _MIN_HISTORY_CANDLES:
+                    start = target_start
+                    mode = "initial"
+                elif (
+                    full
+                    and first is not None
+                    and first.date() > target_start + timedelta(days=_HISTORY_TOLERANCE_DAYS)
+                ):
+                    start = target_start
+                    mode = "deepen"
+                else:
+                    if last is not None and last.date() >= end - timedelta(
+                        days=_FRESH_WITHIN_DAYS
+                    ):
                         logger.info("bootstrap_symbol_fresh", extra={"symbol": symbol})
                         return
+                    latest = last.date() if last is not None else end
                     start = latest - timedelta(days=settings.ingest_incremental_days)
                     start = min(start, end - timedelta(days=1))
                     mode = "incremental"
-                else:
-                    start = end - timedelta(days=days)
-                    mode = "initial"
 
                 service = IngestionService(
                     settings=settings,
@@ -195,7 +210,14 @@ async def _seed_symbol(
             )
 
 
-async def run(symbols_value: str, days: int, limit: int, concurrency: int, sync: bool) -> None:
+async def run(
+    symbols_value: str,
+    days: int,
+    limit: int,
+    concurrency: int,
+    sync: bool,
+    full: bool,
+) -> None:
     """Backfill missing history for explicit symbols or the active universe."""
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -228,6 +250,7 @@ async def run(symbols_value: str, days: int, limit: int, concurrency: int, sync:
                     symbol=symbol,
                     end=end,
                     days=days,
+                    full=full,
                     semaphore=semaphore,
                 )
                 for symbol in symbols
@@ -248,6 +271,7 @@ async def main() -> None:
                 limit=args.limit,
                 concurrency=args.concurrency,
                 sync=args.sync_symbols,
+                full=args.full,
             )
     except Exception as exc:  # noqa: BLE001 - bootstrap must not block API startup
         logger.warning(

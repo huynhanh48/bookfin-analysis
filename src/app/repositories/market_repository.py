@@ -181,6 +181,28 @@ class MarketRepository:
         await self._session.commit()
         return len(rows)
 
+    async def get_candle_bounds(
+        self,
+        symbol: str,
+        timeframe: str = "1D",
+    ) -> tuple[datetime | None, datetime | None, int]:
+        """Return the earliest/latest stored candle timestamps and total count.
+
+        Args:
+            symbol: Mã chứng khoán.
+            timeframe: Khung thời gian.
+
+        Returns:
+            Tuple (first, last, count); first/last là None khi chưa có nến.
+        """
+        statement = select(
+            func.min(Candle.candle_open_time),
+            func.max(Candle.candle_open_time),
+            func.count(),
+        ).where(Candle.symbol == symbol.upper(), Candle.timeframe == timeframe)
+        first, last, count = (await self._session.execute(statement)).one()
+        return first, last, int(count)
+
     async def get_candles(
         self,
         symbol: str,

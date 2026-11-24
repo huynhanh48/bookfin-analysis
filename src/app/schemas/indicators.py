@@ -38,7 +38,7 @@ class IndicatorResult(BaseModel):
     warmup: int = 0
     status: IndicatorStatus = "ok"
     is_final_candle: bool = True
-    engine_version: str = "ind-2.0.0-ta0.8.3"
+    engine_version: str = "ind-2.1.0-ta0.8.3"
     events: list[DivergenceEventOut] = Field(default_factory=list)
 
 

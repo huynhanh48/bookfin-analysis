@@ -132,6 +132,8 @@ export interface ResearchReport {
   news: string;
   news_items: NewsItem[];
   data_note: string;
+  data_freshness?: Record<string, unknown> | null;
+  warnings?: string[];
 }
 
 function conversationPath(id: string): string {

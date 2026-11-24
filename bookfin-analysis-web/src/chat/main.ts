@@ -407,8 +407,10 @@ export function mountChat(root: HTMLDivElement): void {
   const chatList = root.querySelector<HTMLDivElement>("#chat-history-list")!;
   const historyError = root.querySelector<HTMLDivElement>("#chat-history-error")!;
   const modeTagContainer = root.querySelector<HTMLDivElement>("#chat-mode-tag-container")!;
-  let selectedMode: "knowledge" | "research" = "knowledge";
-  let showModeTag = false;
+  const MODE_KEY = "bookfin_chat_mode";
+  const storedMode = localStorage.getItem(MODE_KEY);
+  let selectedMode: "knowledge" | "research" = storedMode === "research" ? "research" : "knowledge";
+  let showModeTag = true;
 
   function renderModeTag(): void {
     if (!showModeTag) {
@@ -429,6 +431,7 @@ export function mountChat(root: HTMLDivElement): void {
     `;
     modeTagContainer.querySelector("#btn-clear-mode-tag")?.addEventListener("click", () => {
       selectedMode = "knowledge";
+      localStorage.setItem(MODE_KEY, selectedMode);
       showModeTag = false;
       renderModeTag();
       textarea.focus();
@@ -495,6 +498,11 @@ export function mountChat(root: HTMLDivElement): void {
     const detail = await chatApi.detail(id);
     setActive(id);
     messages = detail.turns.flatMap(turnMessages);
+    const lastTurn = detail.turns[detail.turns.length - 1];
+    selectedMode = lastTurn?.report ? "research" : "knowledge";
+    localStorage.setItem(MODE_KEY, selectedMode);
+    showModeTag = true;
+    renderModeTag();
     textarea.value = "";
     renderMessages();
   }
@@ -691,7 +699,12 @@ export function mountChat(root: HTMLDivElement): void {
         } else if (isUser) {
           renderedBody = `<span class="chat-user-text">${escapeHtml(safeText)}</span>`;
         } else if (msg.report) {
-          renderedBody = renderResearchReport(msg.report);
+          try {
+            renderedBody = renderResearchReport(msg.report);
+          } catch (error) {
+            console.error("renderResearchReport", error);
+            renderedBody = escapeHtml(safeText || "Không thể hiển thị báo cáo phân tích.");
+          }
         } else {
           try {
             renderedBody = String(marked.parse(safeText));
@@ -734,7 +747,18 @@ export function mountChat(root: HTMLDivElement): void {
       })
       .join("");
 
-    thread.scrollTop = thread.scrollHeight;
+    const lastRow = thread.lastElementChild as HTMLElement | null;
+    if (lastRow?.querySelector(".analysis-report")) {
+      // Long analysis cards should open at their header, not at the final bullet.
+      const top =
+        lastRow.getBoundingClientRect().top -
+        thread.getBoundingClientRect().top +
+        thread.scrollTop -
+        12;
+      thread.scrollTop = Math.max(0, top);
+    } else {
+      thread.scrollTop = thread.scrollHeight;
+    }
 
     thread.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -777,6 +801,7 @@ export function mountChat(root: HTMLDivElement): void {
     }
   }
 
+  renderModeTag();
   renderMessages();
   void renderHistory(true);
   void loadTopicsFromBackend();
@@ -947,11 +972,13 @@ export function mountChat(root: HTMLDivElement): void {
         hiddenFileInput.click();
       } else if (action === "mode-knowledge") {
         selectedMode = "knowledge";
+        localStorage.setItem(MODE_KEY, selectedMode);
         showModeTag = true;
         renderModeTag();
         textarea.focus();
       } else if (action === "mode-research") {
         selectedMode = "research";
+        localStorage.setItem(MODE_KEY, selectedMode);
         showModeTag = true;
         renderModeTag();
         textarea.focus();
@@ -1349,7 +1376,9 @@ const STATUS_ICON: Record<AssessmentStatus, string> = {
 
 function formatPrice(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  return value.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "—";
+  return numeric.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
 }
 
 function safeUrl(value: string): string | null {
@@ -1361,57 +1390,78 @@ function safeUrl(value: string): string | null {
   }
 }
 
-function renderBullets(items: string[], tone: "support" | "risk"): string {
-  if (!items.length) return `<div class="analysis-empty">Chưa có.</div>`;
+function renderBullets(items: string[] | undefined, tone: "support" | "risk"): string {
+  if (!Array.isArray(items) || !items.length) return `<div class="analysis-empty">Chưa có.</div>`;
   return `<ul class="analysis-list ${tone}">${items
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .map((item) => `<li>${escapeHtml(String(item ?? ""))}</li>`)
     .join("")}</ul>`;
 }
 
 function renderResearchReport(report: ResearchReport): string {
-  const rows = report.indicators
-    .map(
-      (row) => `
+  const indicators = Array.isArray(report?.indicators) ? report.indicators : [];
+  const watchLevels = Array.isArray(report?.watch_levels) ? report.watch_levels : [];
+  const supports = Array.isArray(report?.supports) ? report.supports : [];
+  const risks = Array.isArray(report?.risks) ? report.risks : [];
+  const symbols = Array.isArray(report?.symbols) && report.symbols.length ? report.symbols : ["—"];
+  const asOf = String(report?.as_of ?? "");
+  const timeframe = String(report?.timeframe ?? "");
+  const summary = String(report?.summary ?? "");
+  const dataNote = String(report?.data_note ?? "");
+  const historyText = String(report?.history ?? "");
+  const newsText = String(report?.news ?? "");
+  const rows = indicators
+    .map((row) => {
+      const status = String(row?.status ?? "unknown");
+      return `
         <tr>
-          <td class="analysis-indicator-label">${escapeHtml(row.label)}</td>
-          <td class="analysis-status ${row.status}" title="${escapeHtml(row.status)}">${STATUS_ICON[row.status] || "?"}</td>
-          <td>${escapeHtml(row.note)}</td>
-        </tr>`,
-    )
+          <td class="analysis-indicator-label">${escapeHtml(String(row?.label ?? ""))}</td>
+          <td class="analysis-status ${escapeHtml(status)}" title="${escapeHtml(status)}">${STATUS_ICON[status as AssessmentStatus] || "?"}</td>
+          <td>${escapeHtml(String(row?.note ?? ""))}</td>
+        </tr>`;
+    })
     .join("");
-  const levels = report.watch_levels.length
-    ? `<div class="analysis-levels">${report.watch_levels
+  const levels = watchLevels.length
+    ? `<div class="analysis-levels">${watchLevels
         .map(
           (level) =>
-            `<span class="analysis-level-chip"><strong>${escapeHtml(level.label)}</strong> ${formatPrice(level.price)}</span>`,
+            `<span class="analysis-level-chip"><strong>${escapeHtml(String(level?.label ?? ""))}</strong> ${formatPrice(level?.price)}</span>`,
         )
         .join("")}</div>`
     : "";
-  const changeClass = (report.change_pct ?? 0) >= 0 ? "up" : "down";
+  const changeValue = report?.change_pct === null || report?.change_pct === undefined ? null : Number(report.change_pct);
+  const changeClass = (changeValue ?? 0) >= 0 ? "up" : "down";
   const change =
-    report.change_pct === null || report.change_pct === undefined
+    changeValue === null || !Number.isFinite(changeValue)
       ? ""
-      : `<span class="analysis-change ${changeClass}">${report.change_pct >= 0 ? "+" : ""}${report.change_pct.toFixed(2).replace(".", ",")}%</span>`;
-  const showHistory = Boolean(report.history) && report.history !== "Chưa có case tương tự.";
-  const showNews = Boolean(report.news) && report.news !== "Chưa có tin tức phù hợp.";
-  const newsItems = Array.isArray(report.news_items) ? report.news_items : [];
+      : `<span class="analysis-change ${changeClass}">${changeValue >= 0 ? "+" : ""}${changeValue.toFixed(2).replace(".", ",")}%</span>`;
+  const showHistory = Boolean(historyText) && historyText !== "Chưa có case tương tự.";
+  const showNews = Boolean(newsText) && newsText !== "Chưa có tin tức phù hợp.";
+  const newsItems = Array.isArray(report?.news_items) ? report.news_items : [];
+  const warningLabels: Record<string, string> = {
+    data_stale: "Dữ liệu giá chưa cập nhật phiên mới nhất — nhận định chỉ mang tính tham khảo.",
+    data_freshness_unknown: "Chưa xác định được độ mới của dữ liệu giá.",
+  };
+  const warningHtml = (Array.isArray(report?.warnings) ? report.warnings : [])
+    .map((code) => warningLabels[String(code)] || String(code))
+    .map((text) => `<div class="analysis-warning">${escapeHtml(text)}</div>`)
+    .join("");
   const newsHtml =
     showNews || newsItems.length
       ? `<div class="analysis-section-title">Tin tức & bối cảnh</div>
-         ${showNews ? `<p class="analysis-note-block">${escapeHtml(report.news)}</p>` : ""}
+         ${showNews ? `<p class="analysis-note-block">${escapeHtml(newsText)}</p>` : ""}
          ${
            newsItems.length
              ? `<ul class="analysis-news-list">${newsItems
                  .map((item) => {
-                   const url = safeUrl(item.url);
-                   const meta = [item.publisher, item.published_at, item.scope === "market" ? "Toàn thị trường" : "Doanh nghiệp"]
+                   const url = safeUrl(String(item?.url ?? ""));
+                   const meta = [item?.publisher, item?.published_at, item?.scope === "market" ? "Toàn thị trường" : "Doanh nghiệp"]
                      .filter(Boolean)
                      .map((part) => escapeHtml(String(part)))
                      .join(" · ");
                    return `<li>${
                      url
-                       ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>`
-                       : escapeHtml(item.title)
+                       ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(String(item?.title ?? "Bài viết"))}</a>`
+                       : escapeHtml(String(item?.title ?? "Bài viết"))
                    }<span class="analysis-news-meta">${meta}</span></li>`;
                  })
                  .join("")}</ul>`
@@ -1422,16 +1472,17 @@ function renderResearchReport(report: ResearchReport): string {
     <div class="analysis-report">
       <div class="analysis-report-head">
         <div>
-          <span class="analysis-symbol">${escapeHtml(report.symbols.join(", ") || "—")}</span>
-          <span class="analysis-meta">${escapeHtml(report.timeframe)}</span>
+          <span class="analysis-symbol">${escapeHtml(symbols.map((item) => String(item)).join(", ") || "—")}</span>
+          <span class="analysis-meta">${escapeHtml(timeframe)}</span>
         </div>
-        <span class="analysis-date">${escapeHtml(report.as_of)}</span>
+        <span class="analysis-date">${escapeHtml(asOf)}</span>
       </div>
       <div class="analysis-price-row">
-        <strong>${formatPrice(report.price)}</strong>
+        <strong>${formatPrice(report?.price === null || report?.price === undefined ? null : Number(report.price))}</strong>
         ${change}
       </div>
-      <p class="analysis-summary">${escapeHtml(report.summary)}</p>
+      ${warningHtml}
+      <p class="analysis-summary">${escapeHtml(summary)}</p>
       <div class="analysis-section-title">Bảng chỉ báo</div>
       <div class="analysis-table-wrap">
         <table class="analysis-table">
@@ -1444,16 +1495,16 @@ function renderResearchReport(report: ResearchReport): string {
       <div class="analysis-columns">
         <div>
           <div class="analysis-section-title">Điểm hỗ trợ</div>
-          ${renderBullets(report.supports, "support")}
+          ${renderBullets(supports, "support")}
         </div>
         <div>
           <div class="analysis-section-title">Rủi ro / theo dõi</div>
-          ${renderBullets(report.risks, "risk")}
+          ${renderBullets(risks, "risk")}
         </div>
       </div>
       ${levels ? `<div class="analysis-section-title">Mốc giá cần theo dõi</div>${levels}` : ""}
-      ${showHistory ? `<div class="analysis-section-title">Case tương tự</div><p class="analysis-note-block">${escapeHtml(report.history)}</p>` : ""}
+      ${showHistory ? `<div class="analysis-section-title">Case tương tự</div><p class="analysis-note-block">${escapeHtml(historyText)}</p>` : ""}
       ${newsHtml}
-      <div class="analysis-data-note">${escapeHtml(report.data_note)}</div>
+      <div class="analysis-data-note">${escapeHtml(dataNote)}</div>
     </div>`;
 }

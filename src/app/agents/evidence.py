@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -15,7 +15,7 @@ from app.core.config import Settings
 from app.core.database import session_scope
 from app.core.logging import get_logger
 from app.fcdata.client import FcDataClient
-from app.indicators import Ohlcv
+from app.indicators import ENGINE_VERSION, Ohlcv
 from app.indicators.custom import MarketStructureIndicator
 from app.indicators.engine import IndicatorFrame
 from app.indicators.registry import compute_indicator
@@ -26,6 +26,10 @@ from app.services.indicator_service import (
     IndicatorSeriesSet,
     IndicatorService,
     planned_requests,
+)
+from app.services.market_freshness import (
+    expected_session_date,
+    freshness_payload,
 )
 from app.services.market_service import MarketService
 from app.services.provisional_bar import ProvisionalBarProvider
@@ -44,6 +48,7 @@ REQUESTS: tuple[tuple[str, dict[str, int | float]], ...] = (
     ("bollinger", {"period": 20, "stddev": 2.0}),
     ("volume_sma", {"period": 20}),
     ("rvol", {"period": 20}),
+    ("rvol_v2", {"period": 20}),
     ("obv", {}),
     ("divergence", {}),
 )
@@ -58,6 +63,67 @@ class MarketEvidenceLoader:
         self._settings = settings
         self._fcdata = fcdata
         self._redis = redis
+        self._freshness_locks: dict[str, asyncio.Lock] = {}
+
+    async def _ensure_freshness(
+        self,
+        session,
+        service: IndicatorService,
+        symbol: str,
+        timeframe: str,
+        candles: list,
+        analyzed_at: datetime,
+    ) -> tuple[list, dict[str, Any]]:
+        """Backfill a missing confirmed daily session before indicators are built."""
+        tz = self._settings.market_tz
+        expected = expected_session_date(analyzed_at, tz, self._settings.market_close)
+        attempted = False
+        lock = self._freshness_locks.setdefault(symbol, asyncio.Lock())
+        async with lock:
+            # A concurrent analysis may have completed the backfill while this
+            # request waited; re-read before deciding to fetch again.
+            candles = await service.load_confirmed_series_candles(
+                symbol, timeframe, 500, analyzed_at
+            )
+            latest_date = candles[-1].candle_open_time.astimezone(tz).date()
+            if timeframe == "1D" and latest_date < expected and self._fcdata is not None:
+                attempted = True
+                try:
+                    from app.services.ingestion_service import IngestionService
+
+                    async with asyncio.timeout(20):
+                        await IngestionService(
+                            settings=self._settings,
+                            repository=MarketRepository(session),
+                            fcdata=self._fcdata,
+                        ).backfill_symbol(
+                            symbol,
+                            timeframe="1D",
+                            start=latest_date + timedelta(days=1),
+                            end=expected,
+                        )
+                    candles = await service.load_confirmed_series_candles(
+                        symbol, timeframe, 500, analyzed_at
+                    )
+                    latest_date = candles[-1].candle_open_time.astimezone(tz).date()
+                except Exception as exc:
+                    logger.warning(
+                        "agent_freshness_backfill_failed",
+                        extra={"symbol": symbol, "error_type": type(exc).__name__},
+                    )
+        if timeframe != "1D":
+            status = "unknown"
+        elif latest_date >= expected:
+            status = "fresh"
+        else:
+            status = "stale"
+        return candles, freshness_payload(
+            latest=latest_date,
+            expected=expected,
+            status=status,
+            backfill_attempted=attempted,
+            source="postgresql+fcdata" if attempted else "postgresql",
+        )
 
     async def load(
         self, symbol: str, timeframe: str, analyzed_at: datetime, include_live: bool = False
@@ -73,6 +139,9 @@ class MarketEvidenceLoader:
             )
             candles = await service.load_confirmed_series_candles(
                 symbol, timeframe, 500, analyzed_at
+            )
+            candles, freshness = await self._ensure_freshness(
+                session, service, symbol, timeframe, candles, analyzed_at
             )
             revision = hashlib.sha256(
                 repr(
@@ -91,7 +160,10 @@ class MarketEvidenceLoader:
                     ]
                 ).encode()
             ).hexdigest()
-            cache_key = f"agent:technical:v2:{RULE_VERSION}:{symbol}:{timeframe}:{revision}"
+            cache_key = (
+                f"agent:technical:v3:{RULE_VERSION}:{ENGINE_VERSION}:{symbol}:{timeframe}:{revision}:"
+                f"{freshness.get('expected_session')}"
+            )
             evidence = None
             if self._redis is not None:
                 try:
@@ -111,6 +183,7 @@ class MarketEvidenceLoader:
                     except RedisError:
                         logger.warning("agent_technical_cache_write_failed")
         market = evidence["market_snapshot"]
+        market["freshness"] = freshness
         market["market_status"] = "CLOSED_ONLY" if include_live else "HISTORICAL"
         if include_live and self._fcdata is not None:
             try:

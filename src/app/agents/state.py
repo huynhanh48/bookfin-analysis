@@ -29,6 +29,7 @@ class AnalysisState(TypedDict, total=False):
     chat_history: list[BaseMessage]
     include_live: bool
     market_snapshot: dict[str, Any]
+    data_freshness: dict[str, Any]
     indicator_values: dict[str, Any]
     structure: dict[str, Any]
     divergence_events: list[dict[str, Any]]

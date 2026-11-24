@@ -65,13 +65,23 @@ class OpenRouterReportSynthesizer:
             "Chỉ được dùng JSON bằng chứng đã cung cấp; không tự tính lại chỉ báo, không bịa giá, "
             "ngày, tin tức, lịch sử hay xác suất. Nêu rõ khi bằng chứng mâu thuẫn hoặc còn thiếu. "
             "Không bắt buộc phải đưa khuyến nghị mua/bán. "
-            "Quy tắc trình bày: (1) Không viết mã nội bộ, tên key JSON hay trạng thái kỹ thuật thô; "
-            "dịch theo glossary rồi diễn giải ý nghĩa. (2) Không liệt kê chuỗi swing, mã sự kiện "
+            "Quy tắc trình bày: (1) Không viết key JSON hay trạng thái kỹ thuật thô, "
+            "ngoại trừ các symbol structure/divergence được yêu cầu giữ nguyên; "
+            "diễn giải ý nghĩa. (2) Không liệt kê chuỗi swing, mã sự kiện "
             "hoặc hàng loạt con số thô; chỉ nêu 1-2 mốc quan trọng kèm ý nghĩa. "
             "(3) Viết câu ngắn, giọng chuyên gia gần gũi, giải thích thuật ngữ lần đầu xuất hiện. "
             "(4) Tập trung vào: xu hướng, động lượng, dòng tiền, rủi ro và điều kiện theo dõi. "
             "(5) Khi có news_evidence, tổng hợp bối cảnh doanh nghiệp, ngành và toàn thị trường "
             "thành một đoạn ngắn; chỉ dùng tiêu đề/ngày/nguồn có trong dữ liệu, không bịa tin. "
+            "Không đưa tin tức vào điểm hỗ trợ kỹ thuật; đặt trong bối cảnh riêng. "
+            "(6) Không dùng 'điểm sáng duy nhất' hoặc 'đảo chiều chắc chắn' nếu có nhiều tín hiệu "
+            "hoặc phân kỳ ẩn chưa được xác nhận bởi giá. "
+            "(7) Nếu data_freshness.status='stale', phải nêu rõ dữ liệu giá trễ và không dùng "
+            "từ 'hiện tại'; nhận định chỉ là tham khảo. "
+            "(8) Điểm hỗ trợ kỹ thuật chỉ lấy từ chỉ báo có signal_status='positive' hoặc đã được "
+            "giá xác nhận; không đưa RSI trung tính, khối lượng thấp hay tin tức vào mục này. "
+            "(9) Không ghi giá trị số của MA20/MA50 trong phần nhận định/rủi ro; chỉ nói giá "
+            "trên hay dưới MA20/MA50. Chỉ nêu giá MA khi đó là mốc quan trọng trong mục Mốc giá. "
             f"Glossary bắt buộc: {prompt_glossary()}. "
             "Trả lời bằng tiếng Việt theo schema."
         )
@@ -114,8 +124,10 @@ def build_analysis_graph(
                 datetime.fromisoformat(state["analyzed_at"]),
                 include_live=state.get("include_live", False),
             )
+        primary = snapshots[state["symbol"]]
         return {
-            **snapshots[state["symbol"]],
+            **primary,
+            "data_freshness": (primary.get("market_snapshot") or {}).get("freshness", {}),
             "market_by_symbol": snapshots,
             "execution_metadata": {"market_ms": round((perf_counter() - started) * 1000, 2)},
         }

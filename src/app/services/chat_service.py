@@ -46,7 +46,10 @@ class ChatService:
         return chat
 
     async def list(self, owner: str) -> list[ConversationView]:
-        return [ConversationView.model_validate(row) for row in await self.repo.list_conversations(owner)]
+        return [
+            ConversationView.model_validate(row)
+            for row in await self.repo.list_conversations(owner)
+        ]
 
     async def create(self, owner: str) -> ConversationView:
         chat = Conversation(owner_id=owner, title=DEFAULT_TITLE)
@@ -86,7 +89,18 @@ class ChatService:
         """Keep provider I/O outside transactions; reject stale concurrent replies."""
         chat = await self.require(owner, chat_id, lock=True)
         revision = chat.revision
-        history = history_messages(await self.repo.turns(chat_id, HISTORY_TURNS))
+        previous_turns = await self.repo.turns(chat_id, HISTORY_TURNS)
+        history = history_messages(previous_turns)
+        default_symbol = next(
+            (
+                str(turn.report["symbols"][0])
+                for turn in reversed(previous_turns)
+                if isinstance(turn.report, dict)
+                and turn.report.get("symbols")
+                and isinstance(turn.report["symbols"], list)
+            ),
+            None,
+        )
         await self.session.commit()
         try:
             async with asyncio.timeout(settings.agent_timeout_seconds + 30):
@@ -101,6 +115,7 @@ class ChatService:
                             owner,
                             history,
                             follow_up=question if question != payload.question else "",
+                            default_symbol=default_symbol,
                         )
                         answer, report = result.answer, result.report
                     elif rag is not None:

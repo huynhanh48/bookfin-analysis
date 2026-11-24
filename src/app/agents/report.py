@@ -6,12 +6,12 @@ table stays consistent with the indicator engine. The LLM only supplies the
 narrative fields after :func:`humanize_report` removes internal identifiers.
 """
 
-import json
 import re
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.agents.assessment import AssessmentContext, enrich_rows
 from app.core.config import get_settings
 from app.schemas.agent import (
     AnalysisReportCard,
@@ -24,32 +24,31 @@ from app.schemas.agent import (
 
 # Longest identifiers first so BOS_BULLISH is not partially rewritten by BULLISH.
 _GLOSSARY: tuple[tuple[str, str], ...] = (
-    (r"\bFAILED_BREAKOUT_BULLISH\b", "phá vỡ tăng thất bại"),
-    (r"\bFAILED_BREAKOUT_BEARISH\b", "phá vỡ giảm thất bại"),
-    (r"\bCHOCH_BULLISH\b", "đảo chiều cấu trúc tăng"),
-    (r"\bCHOCH_BEARISH\b", "đảo chiều cấu trúc giảm"),
-    (r"\bMSS_BULLISH\b", "thay đổi cấu trúc tăng"),
-    (r"\bMSS_BEARISH\b", "thay đổi cấu trúc giảm"),
-    (r"\bBOS_BULLISH\b", "phá vỡ cấu trúc tăng"),
-    (r"\bBOS_BEARISH\b", "phá vỡ cấu trúc giảm"),
     (r"\bBREAK_BIAS\b", "cấu trúc"),
     (r"\bbreak_bias\b", "cấu trúc"),
+    (r"MACD histogram", "động lượng MACD"),
+    (r"\bhistogram\b", "động lượng"),
+    (r"\btenkan\b", "đường chuyển đổi"),
+    (r"\bkijun\b", "đường cơ sở"),
+    (r"mâu thuẫn nội tại", "tín hiệu chưa đồng thuận"),
     (r"\bCLOSED_ONLY\b", "chỉ dùng nến đã đóng"),
     (r"\bHISTORICAL\b", "dữ liệu lịch sử"),
     (r"\brealtime_price\b", "giá trong phiên"),
-    (r"\bTRANSITION\b", "chuyển tiếp"),
-    (r"\bUPTREND\b", "xu hướng tăng"),
-    (r"\bDOWNTREND\b", "xu hướng giảm"),
-    (r"\bSIDEWAYS\b", "đi ngang"),
-    (r"\bBULLISH\b", "tăng"),
-    (r"\bBEARISH\b", "giảm"),
-    (r"\bNEUTRAL\b", "trung tính"),
     (r"\bCONFIRMED\b", "đã xác nhận"),
     (r"\bnull\b", "chưa có"),
-    (r"\bHH\b", "đỉnh cao hơn"),
-    (r"\bHL\b", "đáy cao hơn"),
-    (r"\bLH\b", "đỉnh thấp hơn"),
-    (r"\bLL\b", "đáy thấp hơn"),
+)
+
+
+_ISO_DATETIME = re.compile(
+    r"\b(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))\b"
+)
+_MA_LEVEL = re.compile(
+    r"\bMA\s*(20|50)\s*(?:\([^)]*\)|(?:quanh|tại|ở)\s+[\d.,]+|\s+[\d.,]{3,})",
+    re.IGNORECASE,
+)
+_MA_TEXT_LEVEL = re.compile(
+    r"(đường trung bình (?:20|50) phiên)\s*(?:\([^)]*\)|(?:quanh|tại|ở)\s+[\d.,]+|\s+[\d.,]{3,})",
+    re.IGNORECASE,
 )
 
 _EVENT_LABELS = {
@@ -69,6 +68,18 @@ _TREND_LABELS = {
     "SIDEWAYS": "Đi ngang",
 }
 _BIAS_LABELS = {"BULLISH": "nghiêng tăng", "BEARISH": "nghiêng giảm", "NEUTRAL": "trung tính"}
+_GENERIC_NEWS_PREFIXES = (
+    "chi tiết tin",
+    "thông tin công bố",
+    "trang chủ",
+    "sự kiện",
+    "tin tức -",
+)
+
+
+def _is_generic_news(title: str) -> bool:
+    lowered = title.casefold().strip()
+    return any(lowered.startswith(prefix) for prefix in _GENERIC_NEWS_PREFIXES)
 
 
 def humanize_text(text: str) -> str:
@@ -76,6 +87,9 @@ def humanize_text(text: str) -> str:
     cleaned = text or ""
     for pattern, replacement in _GLOSSARY:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = _ISO_DATETIME.sub(lambda match: _date(match.group(1)), cleaned)
+    cleaned = _MA_LEVEL.sub(lambda match: f"MA{match.group(1)}", cleaned)
+    cleaned = _MA_TEXT_LEVEL.sub(lambda match: match.group(1), cleaned)
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
@@ -96,6 +110,33 @@ def humanize_report(report: StockReport) -> StockReport:
     for field in ("bullish_evidence", "bearish_evidence", "risks_and_invalidation"):
         data[field] = [humanize_text(item) for item in data[field] if item]
     return StockReport.model_validate(data)
+
+
+def validate_summary(
+    summary: str, supports: list[str], divergence_events: list[dict[str, Any]]
+) -> str:
+    """Small deterministic validator for claims the prompt cannot guarantee.
+
+    It only repairs wording; facts and statuses remain engine-owned.
+    """
+    cleaned = summary or ""
+    if len(supports) > 1:
+        cleaned = re.sub(r"duy nhất", "đáng chú ý", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"không có mức hỗ trợ kỹ thuật nào[^.]*\.",
+        "Chưa có tín hiệu hỗ trợ mới cần xác nhận.",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    latest = divergence_events[-1] if divergence_events else None
+    if latest and str(latest.get("kind") or "").lower() == "hidden":
+        cleaned = re.sub(
+            r"(?:đảo chiều|xác nhận đảo chiều) chắc chắn",
+            "tín hiệu cần xác nhận",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    return cleaned
 
 
 def _market_zone() -> ZoneInfo:
@@ -353,7 +394,8 @@ def build_indicator_rows(
         )
 
     ichimoku = _indicator(indicators, "ichimoku")
-    senkou_a, senkou_b = _value(ichimoku, "senkou_a"), _value(ichimoku, "senkou_b")
+    senkou_a = _value(ichimoku, "cloud_a") or _value(ichimoku, "senkou_a")
+    senkou_b = _value(ichimoku, "cloud_b") or _value(ichimoku, "senkou_b")
     if senkou_a is not None and senkou_b is not None and close is not None:
         cloud_top, cloud_bottom = max(senkou_a, senkou_b), min(senkou_a, senkou_b)
         if close > cloud_top:
@@ -433,7 +475,15 @@ def build_indicator_rows(
 
     rows.append(_structure_row(structure))
     rows.append(_divergence_row(divergence_events, structure))
-    return rows
+    return enrich_rows(
+        rows,
+        AssessmentContext(
+            market=market,
+            indicators=indicators,
+            structure=structure,
+            divergence=divergence_events,
+        ),
+    )
 
 
 def _stance(structure: dict[str, Any]) -> tuple[str, str]:
@@ -459,6 +509,7 @@ def build_report_card(state: dict[str, Any], report: StockReport) -> AnalysisRep
     first = technical.get(symbols[0], {}) if symbols else {}
     market = first.get("market") or {}
     structure = first.get("structure") or {}
+    divergence_events = first.get("divergence") or []
     rows: list[IndicatorAssessment] = []
     for symbol in symbols:
         item = technical.get(symbol) or {}
@@ -500,6 +551,11 @@ def build_report_card(state: dict[str, Any], report: StockReport) -> AnalysisRep
         watch_levels.append(
             WatchLevel(label="Kháng cự gần", price=high["price"], note="Đỉnh gần nhất đã xác nhận.")
         )
+    ma20 = _value(_indicator(first.get("indicators") or {}, "sma", period=20), "sma")
+    if ma20 is not None:
+        watch_levels.append(
+            WatchLevel(label="MA20", price=ma20, note="Mốc cân bằng ngắn hạn cần theo dõi.")
+        )
     bollinger = _indicator(first.get("indicators") or {}, "bollinger")
     for key, label, note in (
         ("lower", "Dải dưới Bollinger", "Vùng hỗ trợ động."),
@@ -509,25 +565,47 @@ def build_report_card(state: dict[str, Any], report: StockReport) -> AnalysisRep
         value = _value(bollinger, key)
         if value is not None:
             watch_levels.append(WatchLevel(label=label, price=value, note=note))
+    deduped_levels: list[WatchLevel] = []
+    for level in watch_levels:
+        if any(abs(level.price - existing.price) < 1e-6 for existing in deduped_levels):
+            continue
+        deduped_levels.append(level)
+    watch_levels = deduped_levels
+
     market_status = str(market.get("market_status") or "")
     as_of = _date(market.get("data_timestamp") or state.get("analyzed_at"))
-    if market_status == "LIVE":
+    freshness = market.get("freshness") or state.get("data_freshness") or {}
+    freshness_status = str(freshness.get("status") or "unknown")
+    warnings: list[str] = []
+    if freshness_status == "stale":
+        expected = _date(freshness.get("expected_session"))
+        latest = _date(freshness.get("latest_session")) or as_of
+        sessions = freshness.get("sessions_behind")
+        data_note = (
+            f"Dữ liệu giá mới nhất {latest}, trễ {sessions} phiên so với phiên kỳ vọng "
+            f"{expected}. Không dùng dữ liệu này để khẳng định 'hiện tại'."
+        )
+        warnings.append("data_stale")
+    elif market_status == "LIVE":
         data_note = f"Dữ liệu đã đóng đến {as_of}, có giá trong phiên tham khảo."
     elif market_status == "HISTORICAL":
         data_note = f"Phân tích theo dữ liệu lịch sử đến {as_of}."
     else:
         data_note = f"Chỉ dùng nến đã đóng đến {as_of}; chưa có giá trong phiên."
+    if freshness_status == "unknown" and timeframe == "1D":
+        warnings.append("data_freshness_unknown")
 
     news_items: list[NewsItem] = []
     seen_urls: set[str] = set()
     for row in state.get("news_evidence") or []:
         url = row.get("canonical_url") or row.get("source_url")
-        if not url or url in seen_urls:
+        title = str(row.get("title") or "")
+        if not url or url in seen_urls or _is_generic_news(title):
             continue
         seen_urls.add(url)
         news_items.append(
             NewsItem(
-                title=row.get("title") or "Bài viết",
+                title=title or "Bài viết",
                 publisher=row.get("publisher") or "",
                 published_at=_date(row.get("published_at")),
                 url=url,
@@ -544,7 +622,7 @@ def build_report_card(state: dict[str, Any], report: StockReport) -> AnalysisRep
         change_pct=change_pct,
         stance=stance,
         stance_label=stance_label,
-        summary=report.final_conclusion,
+        summary=validate_summary(report.final_conclusion, supports, divergence_events),
         indicators=rows,
         supports=supports,
         risks=risks,
@@ -553,6 +631,8 @@ def build_report_card(state: dict[str, Any], report: StockReport) -> AnalysisRep
         news=report.news_context or "Chưa có tin tức phù hợp.",
         news_items=news_items[:8],
         data_note=data_note,
+        data_freshness=freshness or None,
+        warnings=warnings,
     )
 
 
@@ -572,22 +652,41 @@ def prompt_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     market = evidence.get("market") or {}
     friendly_indicators = {}
     for symbol, item in technical.items():
-        friendly_indicators[symbol] = [
-            row.model_dump()
-            for row in build_indicator_rows(
-                item.get("market") or {},
-                item.get("indicators") or {},
-                item.get("structure") or {},
-                item.get("divergence") or [],
-            )
-        ]
+        rows = []
+        for row in build_indicator_rows(
+            item.get("market") or {},
+            item.get("indicators") or {},
+            item.get("structure") or {},
+            item.get("divergence") or [],
+        ):
+            payload = row.model_dump()
+            if row.key == "ma":
+                # MA values are visible on the chart; keep only the relation and
+                # reserve the numeric level for the watch-level section.
+                payload["value"] = None
+            rows.append(payload)
+        friendly_indicators[symbol] = rows
     trend = evidence.get("trend") or {}
     structure = (trend.get("evidence") or {}).get("structure") or {}
     friendly_trend = {
         **_friendly_finding(trend),
-        "trend": _TREND_LABELS.get(str(structure.get("confirmed_trend")), "Đi ngang"),
-        "bias": _BIAS_LABELS.get(str(structure.get("break_bias")), "trung tính"),
-        "latest_event": translate_event(_last_event(structure)),
+        "trend": str(structure.get("confirmed_trend") or "SIDEWAYS"),
+        "bias": str(structure.get("break_bias") or "NEUTRAL"),
+        "latest_event": (
+            f"{_last_event(structure).get('event_type')} "
+            f"{_short_date(_last_event(structure).get('broken_at') or _last_event(structure).get('confirmed_at'))}"
+            if _last_event(structure)
+            else ""
+        ),
+    }
+    divergence = evidence.get("divergence") or {}
+    latest_divergence = (divergence.get("evidence") or {}).get("latest") or {}
+    friendly_divergence = {
+        "direction": str(divergence.get("direction") or "neutral"),
+        "kind": latest_divergence.get("kind"),
+        "confirmed_at": _short_date(latest_divergence.get("confirmed_at")),
+        "price_confirmed_at": _short_date(latest_divergence.get("price_confirmed_at")),
+        "observations": [humanize_text(item) for item in divergence.get("observations") or []],
     }
     history = [
         {
@@ -622,26 +721,17 @@ def prompt_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "volume": _friendly_finding(evidence.get("volume")),
         "momentum": _friendly_finding(evidence.get("momentum")),
         "trend": friendly_trend,
-        "divergence": _friendly_finding(evidence.get("divergence")),
+        "divergence": friendly_divergence,
+        "data_freshness": market.get("freshness") or evidence.get("data_freshness") or {},
         "historical_evidence": history,
         "news_evidence": news,
     }
 
 
 def prompt_glossary() -> str:
-    """Glossary inserted into the synthesis prompt."""
-    return json.dumps(
-        {
-            "BOS_BULLISH": "phá vỡ cấu trúc tăng",
-            "BOS_BEARISH": "phá vỡ cấu trúc giảm",
-            "CHOCH": "đảo chiều cấu trúc",
-            "MSS": "thay đổi cấu trúc",
-            "HH/HL": "đỉnh/đáy cao hơn",
-            "LH/LL": "đỉnh/đáy thấp hơn",
-            "TRANSITION": "chuyển tiếp",
-            "CLOSED_ONLY": "chỉ dùng nến đã đóng",
-            "realtime_price": "giá trong phiên",
-            "break_bias": "độ nghiêng cấu trúc",
-        },
-        ensure_ascii=False,
+    """Keep original structure/divergence symbols; explain only when needed."""
+    return (
+        "Giữ nguyên symbol kỹ thuật: BOS_BULLISH/BOS_BEARISH, CHOCH_*, MSS_*, "
+        "TRANSITION/UPTREND/DOWNTREND, hidden bullish/bearish, regular bullish/bearish, "
+        "HH/HL/LH/LL. Chỉ thêm giải thích ngắn nếu cần, không dịch thay symbol."
     )

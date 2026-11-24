@@ -69,44 +69,238 @@ a.statusbar-action {
   overflow: hidden;
 }
 
-/* Menu Selectbox tính năng mở rộng bên góc phải Header Bar */
-.bookfin-header-select-wrap {
+/* Single Workspace Switcher Icon at bottom of KLineChart Drawing Bar */
+.bookfin-drawingbar-switcher-wrap {
+  width: 100%;
   display: flex;
-  align-items: center;
-  height: 100%;
-  margin-left: auto;
-  padding: 0 8px;
-  border-left: solid 1px var(--klinecharts-pro-border-color, #ebedf1);
+  justify-content: center;
+  margin-top: auto;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--klinecharts-pro-border-color, #ebedf1);
 }
 
-.bookfin-header-select {
-  height: 24px;
-  width: 105px;
-  padding: 0 4px;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: #1677ff;
-  background: #ffffff;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
+.bookfin-drawingbar-switcher-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  outline: none;
+  padding: 0;
   transition: all 0.15s ease;
 }
 
-.bookfin-header-select:hover {
-  border-color: #1677ff;
+.bookfin-drawingbar-switcher-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
-.bookfin-header-select option {
+.bookfin-drawingbar-switcher-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Workspace Switcher Modal */
+.bookfin-switcher-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.bookfin-switcher-card {
+  width: min(380px, 100%);
   background: #ffffff;
-  color: #051441;
-  font-weight: normal;
-  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  color: #0f172a;
 }
 
-.bookfin-header-select option:disabled {
-  color: #8c8c8c;
+.bookfin-switcher-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.bookfin-switcher-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.bookfin-switcher-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #0284c7;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bookfin-switcher-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bookfin-switcher-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.bookfin-switcher-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bookfin-switcher-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.bookfin-switcher-item:hover {
+  background: #f1f5f9;
+}
+
+.bookfin-switcher-item.danger:hover {
+  background: #fef2f2;
+}
+
+.bookfin-switcher-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bookfin-switcher-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.bookfin-switcher-icon.blue {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.bookfin-switcher-icon.amber {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.bookfin-switcher-icon.emerald {
+  background: #dcfce7;
+  color: #059669;
+}
+
+.bookfin-switcher-icon.red {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.bookfin-switcher-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bookfin-switcher-meta strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.bookfin-switcher-meta small {
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.bookfin-switcher-divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 4px 8px;
+}
+
+/* Fix KLineChart Pro Setting Modal layout & spacing */
+.klinecharts-pro-modal .inner {
+  min-width: 520px;
+  border-radius: 8px !important;
+}
+
+.klinecharts-pro-setting-modal-content {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 16px 28px !important;
+  align-items: center !important;
+  padding: 20px 0 12px !important;
+}
+
+.klinecharts-pro-setting-modal-content>span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.klinecharts-pro-modal .button-container {
+  gap: 10px !important;
+  padding-top: 12px !important;
+}
+
+.klinecharts-pro-modal .button-container .klinecharts-pro-button {
+  width: auto !important;
+  min-width: 112px;
+  padding: 0 16px !important;
+  white-space: nowrap !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+
+.klinecharts-pro-select .selector-container {
+  white-space: nowrap !important;
 }
 
 /* Modal Watchlist */

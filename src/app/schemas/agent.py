@@ -81,13 +81,25 @@ ReportStance = Literal["bullish", "bearish", "mixed", "neutral"]
 
 
 class IndicatorAssessment(BaseModel):
-    """One normalized indicator row rendered as a table by the chat client."""
+    """One normalized indicator row rendered as a table by the chat client.
+
+    ``status`` is the directional assessment; ``state`` keeps non-directional
+    facts (zone, volatility regime, alignment) so volume/BB are not forced into
+    bullish/bearish labels. ``signal_phase`` separates an early signal from an
+    indicator-confirmed or price-confirmed one.
+    """
 
     key: str
     label: str
     value: str | None = None
     status: AssessmentStatus = "unknown"
     note: str = ""
+    signal_phase: Literal["early", "indicator_confirmed", "price_confirmed"] | None = None
+    confirmation_level: Literal["early", "indicator", "price"] | None = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class WatchLevel(BaseModel):
@@ -134,6 +146,8 @@ class AnalysisReportCard(BaseModel):
     news: str = "Chưa có tin tức phù hợp."
     news_items: list[NewsItem] = Field(default_factory=list)
     data_note: str = ""
+    data_freshness: dict[str, Any] | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):

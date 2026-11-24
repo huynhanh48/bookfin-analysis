@@ -10,9 +10,27 @@ from app.repositories.market_repository import MarketRepository
 from app.schemas.agent import AnalyzeRequest
 
 RULE_VERSION = "research-v1"
+_GENERIC_NEWS_PREFIXES = (
+    "chi tiết tin",
+    "thông tin công bố",
+    "trang chủ",
+    "sự kiện",
+    "tin tức -",
+)
 
 
-async def resolve_request(request: AnalyzeRequest, market_tz, *, follow_up: str | None = None):
+def _is_generic_news_title(title: str) -> bool:
+    lowered = (title or "").casefold().strip()
+    return any(lowered.startswith(prefix) for prefix in _GENERIC_NEWS_PREFIXES)
+
+
+async def resolve_request(
+    request: AnalyzeRequest,
+    market_tz,
+    *,
+    follow_up: str | None = None,
+    default_symbol: str | None = None,
+):
     """Resolve validated symbols and a point-in-time cutoff before admitting work."""
 
     def tokens(text: str) -> list[str]:
@@ -34,6 +52,10 @@ async def resolve_request(request: AnalyzeRequest, market_tz, *, follow_up: str 
             for token in [token for token in tokens(follow_up) if token not in ignored][:30]:
                 if await repo.get_symbol(token):
                     symbols.append(token)
+        if not symbols and default_symbol:
+            token = default_symbol.upper().strip()
+            if await repo.get_symbol(token):
+                symbols.append(token)
     if not symbols or len(symbols) > 5:
         raise InvalidRequestError("Vui lòng chỉ rõ từ 1 đến 5 mã cổ phiếu.")
     timeframe = (
@@ -241,6 +263,8 @@ class ResearchContext:
                 if results:
                     break
             for item in results:
+                if _is_generic_news_title(item.title):
+                    continue
                 if item.published_at > cutoff or (item.updated_at and item.updated_at > cutoff):
                     continue
                 data = item.model_dump(mode="json")
@@ -264,6 +288,8 @@ class ResearchContext:
             associated_symbol="MARKET",
         )
         for item in market_results:
+            if _is_generic_news_title(item.title):
+                continue
             if item.published_at > cutoff or (item.updated_at and item.updated_at > cutoff):
                 continue
             data = item.model_dump(mode="json")
@@ -380,7 +406,8 @@ def evaluate_signals(snapshot: dict[str, Any], timeframe: str) -> list[dict[str,
                     alerts.append("narrow_band")
                 explanation = "Giá so với đường giữa và độ rộng dải."
         elif name == "ichimoku":
-            a, b = values.get("senkou_a"), values.get("senkou_b")
+            a = values.get("cloud_a", values.get("senkou_a"))
+            b = values.get("cloud_b", values.get("senkou_b"))
             close = market.get("close")
             if a is not None and b is not None and close is not None:
                 direction = (

@@ -125,11 +125,14 @@ def compute_ichimoku(
     senkou_a_value = last_value(senkou_a)
     senkou_b_value = last_value(senkou_b)
     price = last_value(close)
+    cloud_index = len(senkou_a) - 1 - kijun_period
+    cloud_a = senkou_a[cloud_index] if cloud_index >= 0 else None
+    cloud_b = senkou_b[cloud_index] if cloud_index >= 0 else None
 
     signal = None
-    if price is not None and senkou_a_value is not None and senkou_b_value is not None:
-        cloud_top = max(senkou_a_value, senkou_b_value)
-        cloud_bottom = min(senkou_a_value, senkou_b_value)
+    if price is not None and cloud_a is not None and cloud_b is not None:
+        cloud_top = max(cloud_a, cloud_b)
+        cloud_bottom = min(cloud_a, cloud_b)
         if price > cloud_top:
             signal = "above_cloud"
         elif price < cloud_bottom:
@@ -149,6 +152,8 @@ def compute_ichimoku(
             "kijun": kijun_value,
             "senkou_a": senkou_a_value,
             "senkou_b": senkou_b_value,
+            "cloud_a": cloud_a,
+            "cloud_b": cloud_b,
         },
         warmup=senkou_b_period + kijun_period,
         signal=signal,

@@ -102,9 +102,13 @@ class AgentService:
         analysis_id: UUID,
         *,
         follow_up: str | None = None,
+        default_symbol: str | None = None,
     ) -> AnalysisState:
         symbols, timeframe, cutoff = await resolve_request(
-            request, self._settings.market_tz, follow_up=follow_up
+            request,
+            self._settings.market_tz,
+            follow_up=follow_up,
+            default_symbol=default_symbol,
         )
         analyzed_at = cutoff or datetime.now(UTC)
         return {
@@ -124,10 +128,18 @@ class AgentService:
         }
 
     async def answer_chat(
-        self, request: AnalyzeRequest, user_id: str, history: list[BaseMessage], *, follow_up: str
+        self,
+        request: AnalyzeRequest,
+        user_id: str,
+        history: list[BaseMessage],
+        *,
+        follow_up: str,
+        default_symbol: str | None = None,
     ) -> AgentChatAnswer:
         """Reuse the research graph with the chat database as the transcript store."""
-        initial = await self._initial_state(request, user_id, uuid4(), follow_up=follow_up)
+        initial = await self._initial_state(
+            request, user_id, uuid4(), follow_up=follow_up, default_symbol=default_symbol
+        )
         initial["chat_history"] = history
         async with self._semaphore:
             result = await self._graph(None).ainvoke(initial)

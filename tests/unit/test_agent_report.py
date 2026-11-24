@@ -123,36 +123,47 @@ def test_report_card_computes_statuses_and_formats_values():
     assert rows["ma"].status == "negative"
     assert rows["ma"].value == "62.180 / 64.780"
     assert rows["rsi"].status == "neutral"
-    assert "30–70" in rows["rsi"].note
-    assert rows["macd"].status == "positive"
+    assert rows["rsi"].state["rsi_zone"] == "weak"
+    assert "30–50" in rows["rsi"].note
+    assert rows["macd"].status == "neutral"
+    assert rows["macd"].state["zero_zone"] == "negative"
+    assert rows["macd"].state["momentum_state"] == "bullish_weakening"
     assert rows["adx"].status == "neutral"
-    assert "dưới 25" in rows["adx"].note
+    assert "chuyển tiếp 20–25" in rows["adx"].note
     assert rows["ichimoku"].status == "negative"
     assert rows["ichimoku"].value == "Dưới mây"
-    assert rows["bollinger"].status == "negative"
+    assert rows["bollinger"].status == "neutral"
+    assert rows["bollinger"].state["band_walk"] == "lower"
     assert rows["volume"].status == "neutral"
     assert rows["volume"].label == "Khối lượng"
     assert rows["volume"].value == "1,14x TB20"
+    assert rows["volume"].state["volume_state"] == "normal"
     assert rows["obv"].status == "neutral"
     assert rows["obv"].value == "Không đổi"
     assert rows["obv"].label == "OBV (dòng tiền)"
-    assert rows["structure"].status == "negative"
-    assert rows["divergence"].status == "positive"
-    assert rows["divergence"].value == "Có — dương"
-    assert "đảo chiều tiềm năng" in rows["divergence"].note
-    assert "phá vỡ cấu trúc giảm" in rows["structure"].note.lower()
+    assert rows["structure"].status == "neutral"
+    assert rows["structure"].state["trend_state"] == "transition"
+    assert rows["divergence"].status == "neutral"
+    assert any(level.label == "MA20" and level.price == 62_180 for level in card.watch_levels)
+    assert rows["divergence"].state["divergence_type"] == "hidden_bullish"
+    assert "tích lũy" in rows["divergence"].note
+    assert rows["divergence"].value == "hidden bullish"
+    assert "BOS_BEARISH" in rows["structure"].note
+    assert rows["structure"].value == "TRANSITION/BEARISH"
 
 
 def test_humanize_removes_internal_identifiers():
     text = humanize_text("CLOSED_ONLY, break_bias BEARISH, BOS_BEARISH 15/11, HH 246.500, null")
     assert "CLOSED_ONLY" not in text
     assert "break_bias" not in text
-    assert "BOS_BEARISH" not in text
-    assert "HH" not in text
+    assert "BOS_BEARISH" in text
+    assert "HH" in text
     assert "null" not in text
     assert "chỉ dùng nến đã đóng" in text
-    assert "phá vỡ cấu trúc giảm" in text
-    assert "đỉnh cao hơn" in text
+    assert "phá vỡ cấu trúc giảm" not in text
+    assert "đỉnh cao hơn" not in text
+    assert humanize_text("Giá dưới MA20 (62.185) và MA50 (64.776).") == "Giá dưới MA20 và MA50."
+    assert humanize_text("MA20 quanh 62.185 là mốc.") == "MA20 là mốc."
 
 
 def test_translate_event_is_plain_and_dated():
@@ -165,11 +176,11 @@ def test_markdown_table_has_status_icons_without_raw_keys():
     markdown = render_markdown({**STATE, "report_card": card.model_dump()}, report)
     assert "| Chỉ báo | Đánh giá | Ghi chú |" in markdown
     assert "| Chỉ báo | Giá trị |" not in markdown
-    assert "✓" in markdown and "✕" in markdown
+    assert "✕" in markdown and "•" in markdown
     assert "sma=" not in markdown
     assert "CLOSED_ONLY" not in markdown
     assert "break_bias" not in markdown
-    assert "BOS_BEARISH" not in markdown
+    assert "BOS_BEARISH" in markdown
 
 
 def test_report_card_includes_news_sources_with_scope():
@@ -219,5 +230,6 @@ def test_prompt_evidence_strips_engine_structures():
     assert "break_bias" not in payload
     assert "swings" not in payload
     assert "events" not in payload
-    assert "Phá vỡ cấu trúc giảm" in payload
-    assert "62.180 / 64.780" in payload
+    assert "BOS_BEARISH" in payload
+    assert "TRANSITION" in payload
+    assert "62.180 / 64.780" not in payload

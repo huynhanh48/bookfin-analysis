@@ -134,6 +134,15 @@ INDICATORS: dict[str, IndicatorSpec] = {
         warmup=20,
         description="Khối lượng tương đối so với trung bình 20 phiên.",
     ),
+    "rvol_v2": IndicatorSpec(
+        name="rvol_v2",
+        category="volume",
+        compute=volume.compute_relative_volume_previous,
+        input_kind="volume",
+        default_parameters={"period": 20},
+        warmup=21,
+        description="RVOL v2 so với trung bình 20 phiên trước, không gồm nến hiện tại.",
+    ),
     "obv": IndicatorSpec(
         name="obv",
         category="volume",

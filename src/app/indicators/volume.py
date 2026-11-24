@@ -57,6 +57,36 @@ def compute_relative_volume(volume: np.ndarray, *, period: int = 20) -> Indicato
     )
 
 
+def compute_relative_volume_previous(volume: np.ndarray, *, period: int = 20) -> IndicatorOutput:
+    """RVOL v2: current volume / mean of the previous ``period`` completed sessions.
+
+    The current candle is deliberately excluded from the denominator so the
+    denominator is known before the session being measured. RVOL v1 remains
+    available as ``rvol`` for backward compatibility.
+    """
+    volume_array = as_float_array(volume)
+    if len(volume_array) < period + 1:
+        return IndicatorOutput(
+            indicator="rvol_v2",
+            parameters={"period": period},
+            values={"rvol": None},
+            warmup=period + 1,
+        )
+    average_value = float(np.mean(volume_array[-period - 1 : -1]))
+    current = float(volume_array[-1])
+    rvol = current / average_value if np.isfinite(average_value) and average_value != 0 else None
+    signal = None
+    if rvol is not None:
+        signal = "above_average" if rvol >= 1.5 else "below_average" if rvol < 0.8 else "normal"
+    return IndicatorOutput(
+        indicator="rvol_v2",
+        parameters={"period": period},
+        values={"rvol": rvol},
+        warmup=period + 1,
+        signal=signal,
+    )
+
+
 def compute_obv(close: np.ndarray, volume: np.ndarray) -> IndicatorOutput:
     """Tính On Balance Volume tại nến cuối.
 

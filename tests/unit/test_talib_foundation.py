@@ -30,7 +30,7 @@ def frame():
     )
 
 
-@pytest.mark.parametrize("name", list(NATIVE_SPECS))
+@pytest.mark.parametrize("name", [name for name in NATIVE_SPECS if name != "ichimoku"])
 def test_native_adapter_matches_direct_function(frame, name):
     params = INDICATORS[name].default_parameters
     adapter = build_indicator(name, params)

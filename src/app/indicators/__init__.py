@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-ENGINE_VERSION = "ind-2.0.0-ta0.8.3"
+ENGINE_VERSION = "ind-2.1.0-ta0.8.3"
 IndicatorStatus = Literal["ok", "insufficient_history"]
 
 

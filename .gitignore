@@ -17,8 +17,8 @@ dist/
 AGENTS.md
 docs/*
 !docs/stock-screener.md
-indicators/
-references/
+/indicators/
+/references/
 .vscode/
 # bookfin-analysis-web/
 deliverables/

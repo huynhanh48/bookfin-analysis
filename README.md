@@ -36,30 +36,180 @@ curl -s http://127.0.0.1:8000/ready
 
 ## Deploy production bằng Docker
 
-Stack production đóng gói API, frontend Nginx, PostgreSQL/pgvector, Redis,
-migration và các worker role:
+`docker-compose.prod.yml` đóng gói toàn bộ stack:
+
+| Service | Vai trò | Port |
+|---|---|---|
+| `frontend` | Nginx serve SPA + proxy `/api/`, WebSocket | `${WEB_PORT:-8080}` |
+| `api` | FastAPI, RAG consumer, chat, agent | `127.0.0.1:${API_PORT:-8000}` |
+| `postgres` | PostgreSQL 17 + pgvector | `127.0.0.1:${POSTGRES_PORT:-5432}` |
+| `redis` | cache, mirror, worker lock | `127.0.0.1:${REDIS_PORT:-6379}` |
+| `migrate` | chạy Alembic một lần trước API | — |
+| `scheduler` | job định kỳ | — |
+| `realtime` | cache nến đang chạy + trigger sau đóng phiên | — |
+| `worker` | chạy job thủ công (`--profile worker`) | — |
+
+### 1. Chuẩn bị VPS
+
+- Docker Engine + Docker Compose v2.
+- Khuyến nghị tối thiểu **4 GB RAM**, **20 GB dung lượng trống** (backend image có MinerU/torch nên khá lớn).
+- Mở port `${WEB_PORT:-8080}` (hoặc đặt sau Caddy/Nginx/Cloudflare).
+- FCData, OpenRouter, Tavily/Firecrawl phải truy cập được từ VPS.
+
+### 2. Clone branch deploy
+
+```bash
+git clone https://github.com/huynhanh48/bookfin-analysis.git
+cd bookfin-analysis
+git checkout v1.1.0
+```
+
+### 3. Tạo `.env` và điền cấu hình
 
 ```bash
 cp .env.example .env
-# Bắt buộc: POSTGRES_PASSWORD, REDIS_PASSWORD, ADMIN_API_KEY,
-# OPENROUTER_API_KEY, AGENT_ENABLED/AGENT_NEWS_ENABLED nếu dùng agent.
-
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
-
-# Frontend (Nginx) là entrypoint công khai, mặc định cổng 8080:
-# http://<server>:${WEB_PORT:-8080}
-# Nginx proxy /api/ và WebSocket /api/v1/ws tới API container.
-
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs -f api frontend
+chmod 600 .env
 ```
 
-- `ADMIN_API_KEY` bắt buộc vì `APP_ENV=production`; frontend sẽ hỏi key ở lần gọi API đầu tiên và lưu localStorage.
-- `migrate` chạy `alembic upgrade head` trước khi API/worker khởi động.
-- `rag_data` là named volume dùng chung; chỉ API được sở hữu RAG runtime (one process per volume).
-- PostgreSQL/Redis chỉ bind `127.0.0.1`, không public trực tiếp.
-- Đổi image tag bằng `IMAGE_TAG=v1.1.0`.
+**Không commit `.env`.** Các biến bắt buộc:
+
+| Biến | Bắt buộc | Ghi chú |
+|---|---|---|
+| `POSTGRES_PASSWORD` | Có | mật khẩu PostgreSQL; đổi khỏi giá trị mẫu |
+| `REDIS_PASSWORD` | Có | mật khẩu Redis |
+| `ADMIN_API_KEY` | Có | `APP_ENV=production` bắt buộc; frontend sẽ hỏi key lần đầu |
+| `OPENROUTER_API_KEY` | Có nếu dùng RAG/agent | LLM, vision, embedding, rerank |
+| `AGENT_ENABLED` | Nên đặt `true` | bật mode Phân tích cổ phiếu |
+| `AGENT_NEWS_ENABLED` | Nên đặt `true` | bật tin tức trong research report |
+| `RAG_ENABLED` | Nên đặt `true` | tắt thì các endpoint RAG trả 503 |
+| `RAG_NEWS_ENABLED` | Nên đặt `true` | cần `TAVILY_API_KEY`; Firecrawl là fallback |
+| `TAVILY_API_KEY` | Nếu bật news | search chính |
+| `FIRECRAWL_API_KEY` | Khuyến nghị | fallback extraction/search |
+| `RAG_NEWS_RSS_FEEDS` | Tuỳ chọn | JSON array một dòng, ví dụ `["https://cafef.vn/...rss"]` |
+| `RAG_REMOTE_PARSER_URL` | Nếu ingest PDF | PDF bị chặn nếu không có parser remote |
+| `WEB_PORT` | Tuỳ chọn | mặc định `8080` |
+| `API_PORT` | Tuỳ chọn | mặc định `8000`, chỉ bind localhost |
+| `IMAGE_TAG` | Tuỳ chọn | mặc định `v1.1.0` |
+
+Các biến **không nên sửa trong `.env` production**:
+
+- `DATABASE_URL`, `REDIS_URL`: compose tự trỏ tới host `postgres`/`redis`.
+- `APP_ENV`: compose force `production`.
+- `RAG_STORAGE_DIR`, `RAG_UPLOAD_DIR`: compose trỏ vào `/app/data`.
+
+Lưu ý cấu hình RAG:
+
+- `RAG_TEXT_EMBEDDING_MODEL` / `RAG_TEXT_EMBEDDING_DIMENSION` và
+  `RAG_MULTIMODAL_EMBEDDING_MODEL` / `RAG_MULTIMODAL_EMBEDDING_DIMENSION`
+  phải khớp model thật. **Không đổi dimension sau khi đã có vector** nếu chưa reindex.
+- `RAG_RERANK_ENABLED=true` dùng OpenRouter; `RAG_RERANK_FAIL_OPEN=true` để report
+  vẫn chạy khi reranker lỗi.
+- `AGENT_CHECKPOINT_ENABLED=true` cần migration checkpointer; `migrate` xử lý tự động.
+- Chỉ chạy **một process RAG** trên một volume. Không chạy thêm `rag_worker` độc lập
+  cùng API đang bật RAG.
+
+Kiểm tra cấu hình trước khi build:
+
+```bash
+docker compose -f docker-compose.prod.yml config >/dev/null && echo OK
+```
+
+Nếu báo thiếu `ADMIN_API_KEY`/`POSTGRES_PASSWORD`/`REDIS_PASSWORD`, điền lại `.env`.
+
+### 4. Build và chạy
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Lần build đầu sẽ lâu vì cài Python dependency + frontend. `migrate` chạy
+`alembic upgrade head` trước khi API/worker khởi động.
+
+Kiểm tra:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f migrate
+docker compose -f docker-compose.prod.yml logs -f api frontend
+curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/ready
+```
+
+Frontend:
+
+```text
+http://<VPS_IP>:8080
+```
+
+Lần đầu gọi API, nếu `ADMIN_API_KEY` đã đặt, trình duyệt sẽ hỏi key. Key được lưu
+trong `localStorage["bookfin_admin_key"]`; khi đổi key phải xoá key cũ trong
+DevTools → Application → Local Storage.
+
+### 5. Reverse proxy + HTTPS (khuyến nghị)
+
+Nginx/Caddy chỉ cần proxy tới `127.0.0.1:8080`; Nginx trong container đã proxy
+`/api/` và WebSocket `/api/v1/ws` sang API.
+
+Ví dụ Caddy:
+
+```text
+bookfin.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Không cần mở trực tiếp PostgreSQL/Redis/API ra Internet.
+
+### 6. Vận hành
+
+```bash
+# log
+docker compose -f docker-compose.prod.yml logs -f api scheduler realtime
+
+# chạy migration thủ công khi cần
+docker compose -f docker-compose.prod.yml run --rm migrate
+
+# chạy job một lần
+docker compose -f docker-compose.prod.yml --profile worker run --rm worker \
+  python -m app.workers run divergence-scan --param limit=20
+```
+
+Backup tối thiểu:
+
+- PostgreSQL: `pg_dump` database `stock_research`.
+- Volume `rag_data`: chứa upload gốc, LightRAG NetworkX graph, parser artifacts.
+- Volume `postgres_data`.
+- Volume `redis_data` không phải source of truth; có thể mất nếu chấp nhận rebuild cache.
+
+### 7. Update / rollback
+
+```bash
+git fetch origin
+git checkout v1.1.0
+git pull
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+```
+
+- Luôn backup PostgreSQL + `rag_data` trước khi update.
+- Migration được chạy bởi service `migrate`.
+- Rollback code không tự rollback schema; cần restore DB backup hoặc viết migration down
+  có kiểm soát. Không chạy downgrade mù trên production.
+
+### 8. Lỗi thường gặp
+
+| Hiện tượng | Kiểm tra |
+|---|---|
+| `401/403` khi chat | `ADMIN_API_KEY` trong `.env`; nhập lại key ở frontend |
+| `502` từ frontend | API unhealthy, migration lỗi; xem `logs api migrate` |
+| `compose config` báo thiếu biến | điền `ADMIN_API_KEY`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD` |
+| RAG trả 503 | `RAG_ENABLED=true`; API là process duy nhất giữ volume |
+| RAG lỗi lock | chỉ một API/RAG runtime trên volume; không chạy worker RAG song song |
+| PDF không ingest | thiếu `RAG_REMOTE_PARSER_URL` |
+| Không có nến mới | FCData reachable; kiểm tra log backfill/worker; freshness warning |
+| Hết dung lượng Docker | prune image/cache; backend image có MinerU/torch dung lượng lớn |
+
 
 Chạy local không Docker:
 
